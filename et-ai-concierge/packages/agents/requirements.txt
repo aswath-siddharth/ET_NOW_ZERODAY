@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+langgraph
+langchain
+langchain-anthropic
+mem0ai
+upstash-redis
+supabase
+celery
+deepgram-sdk
+elevenlabs
+finnhub-python
+langsmith
+sentry-sdk
+pydantic
+python-dotenv
