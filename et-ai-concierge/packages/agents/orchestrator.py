@@ -1,41 +1,430 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Dict, Any
+"""
+ET AI Concierge — LangGraph Orchestrator (Agent 0)
+Main brain: receives all messages, routes to workers, synthesizes responses.
+Serves as the FastAPI application entry point.
+"""
+import json
+import uuid
+import asyncio
 import datetime
+from typing import Optional, Dict, Any, AsyncGenerator
 
-app = FastAPI(title="ET AI Concierge API")
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, JSONResponse
 
-class Message(BaseModel):
-    role: str
-    content: str
+from state import (
+    ConciergeState, UserProfile, Message, ChatRequest, ChatResponse,
+    SessionState, AgentResponse, SentimentType, IntentType, ModalityType,
+    OnboardingRequest, OnboardingResponse,
+)
+from config import settings
+from compliance_wrapper import compliance_wrapper
+from profiling_agent import (
+    run_profiling_agent, get_onboarding_step, process_onboarding_answer,
+    complete_profiling, PROFILING_QUESTIONS, calculate_profile_completeness,
+)
+from editorial_agent import run_editorial_agent
+from market_intelligence_agent import run_market_intelligence_agent
+from marketplace_agent import run_marketplace_agent
+from behavioral_monitor import run_behavioral_monitor, track_paywall_hit, track_query
+from database import init_db, create_user, update_user_profile, get_user, log_audit
 
-class ChatRequest(BaseModel):
-    message: str
-    session_id: str
+# ─── Optional: Groq LLM ──────────────────────────────────────────────────────
+try:
+    from groq import Groq
+    groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+except ImportError:
+    groq_client = None
+
+# ─── Optional: Redis ──────────────────────────────────────────────────────────
+try:
+    import redis as redis_lib
+    redis_client = redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_client.ping()
+    print("✅ Redis connected")
+except Exception:
+    redis_client = None
+    print("⚠️ Redis not available, using in-memory session store")
+
+# ─── In-Memory Fallbacks ─────────────────────────────────────────────────────
+_sessions: Dict[str, SessionState] = {}
+_profiles: Dict[str, UserProfile] = {}
+_onboarding_state: Dict[str, Dict[str, Any]] = {}
+
+
+# ─── FastAPI App ──────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """You are the ET AI Concierge — a Financial Life Navigator for The Economic Times ecosystem.
+Your job is not to answer questions. Your job is to understand the user's complete financial life
+and proactively guide them toward the ET tools, stories, courses, and financial products that
+will genuinely help them.
+
+Every message you receive, do three things before responding:
+1. Check the user's stored profile (goals, risk tolerance, interests, persona).
+2. Detect sentiment: frustrated / anxious / curious / confident.
+3. Detect intent: inform / transact / learn / discover.
+
+Then route to the right worker agent. Never answer from your own knowledge alone.
+Always ground your response in real ET content or real market data.
+
+When you synthesize the final response:
+- Be conversational, not corporate.
+- Never give generic advice. Always cite a specific ET tool, story, or product.
+- If the user seems anxious, lower jargon density and increase reassurance.
+- If the user is an active trader, be precise and data-dense."""
+
+app = FastAPI(
+    title="ET AI Concierge API",
+    description="Multi-Agent Financial Life Navigator",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup():
+    init_db()
+    print("🚀 ET AI Concierge API is running")
+
+
+# ─── Helper Functions ─────────────────────────────────────────────────────────
+
+def _get_profile(user_id: str) -> UserProfile:
+    """Get or create user profile."""
+    if user_id in _profiles:
+        return _profiles[user_id]
+    profile = UserProfile(id=user_id)
+    _profiles[user_id] = profile
+    return profile
+
+
+def _save_session(user_id: str, session: SessionState):
+    """Save session to Redis or in-memory."""
+    session.last_interaction = datetime.datetime.utcnow().isoformat()
+    data = session.model_dump_json()
+    if redis_client:
+        try:
+            redis_client.setex(f"session:{user_id}:latest", 3600, data)
+            return
+        except Exception:
+            pass
+    _sessions[user_id] = session
+
+
+def _get_session(user_id: str) -> Optional[SessionState]:
+    """Retrieve session from Redis or in-memory."""
+    if redis_client:
+        try:
+            data = redis_client.get(f"session:{user_id}:latest")
+            if data:
+                return SessionState(**json.loads(data))
+        except Exception:
+            pass
+    return _sessions.get(user_id)
+
+
+def detect_sentiment(message: str) -> SentimentType:
+    """Simple rule-based sentiment detection. Replaced by LLM in production."""
+    msg = message.lower()
+    if any(w in msg for w in ["worried", "scared", "afraid", "panic", "crash", "loss"]):
+        return SentimentType.ANXIOUS
+    elif any(w in msg for w in ["frustrated", "annoyed", "angry", "confused", "stuck"]):
+        return SentimentType.FRUSTRATED
+    elif any(w in msg for w in ["sure", "confident", "great", "profit", "rally"]):
+        return SentimentType.CONFIDENT
+    return SentimentType.CURIOUS
+
+
+def detect_intent(message: str) -> IntentType:
+    """Simple rule-based intent detection."""
+    msg = message.lower()
+    if any(w in msg for w in ["buy", "sell", "apply", "transfer", "invest", "loan"]):
+        return IntentType.TRANSACT
+    elif any(w in msg for w in ["learn", "course", "masterclass", "understand", "explain", "how"]):
+        return IntentType.LEARN
+    elif any(w in msg for w in ["what", "which", "tell me", "news", "article", "read"]):
+        return IntentType.INFORM
+    return IntentType.DISCOVER
+
+
+def route_to_agent(message: str, intent: IntentType, profile: UserProfile) -> str:
+    """Determine which agent should handle this message."""
+    msg = message.lower()
+
+    # Profile incomplete → profiling agent
+    if not profile.onboarding_complete and calculate_profile_completeness({}) < 0.6:
+        if any(w in msg for w in ["start", "hello", "hi", "new", "first"]):
+            return "profiling_agent"
+
+    # Market data queries → market intelligence
+    if any(w in msg for w in [
+        "price", "nifty", "sensex", "gold", "stock", "market",
+        "portfolio", "rebalance", "nav", "mutual fund", "briefing", "morning"
+    ]):
+        return "market_intelligence_agent"
+
+    # Financial product queries → marketplace
+    if any(w in msg for w in [
+        "loan", "emi", "home loan", "credit card", "insurance", "fd",
+        "fixed deposit", "nps", "pension", "apply"
+    ]):
+        return "marketplace_agent"
+
+    # Editorial / learning queries → editorial
+    if any(w in msg for w in [
+        "article", "news", "read", "et prime", "analysis",
+        "learn", "course", "masterclass"
+    ]):
+        return "editorial_agent"
+
+    # Intent-based fallback
+    if intent == IntentType.TRANSACT:
+        return "marketplace_agent"
+    elif intent == IntentType.LEARN:
+        return "editorial_agent"
+    elif intent == IntentType.INFORM:
+        return "editorial_agent"
+
+    return "editorial_agent"  # Default to editorial
+
+
+def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, user_message: str) -> str:
+    """Use Groq LLM to add a conversational wrapper around the agent response."""
+    if not groq_client:
+        return agent_response.content
+
+    try:
+        tone_instruction = ""
+        if sentiment == SentimentType.ANXIOUS:
+            tone_instruction = "The user seems anxious. Use reassuring, simple language. Avoid jargon."
+        elif sentiment == SentimentType.FRUSTRATED:
+            tone_instruction = "The user seems frustrated. Be empathetic and direct."
+        elif sentiment == SentimentType.CONFIDENT:
+            tone_instruction = "The user is confident. Be precise and data-focused."
+
+        response = groq_client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{tone_instruction}"},
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": f"Here's the data from our systems:\n{agent_response.content}"},
+                {"role": "user", "content": "Now synthesize this into a conversational, helpful response. Keep the data and links intact."},
+            ],
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"⚠️ LLM synthesis failed: {e}")
+        return agent_response.content
+
+
+# ─── API Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.datetime.utcnow().isoformat()}
+    return {
+        "status": "ok",
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "services": {
+            "redis": redis_client is not None,
+            "groq_llm": groq_client is not None,
+        }
+    }
 
-@app.post("/api/chat")
+
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    # This is a stub for the LangGraph Orchestrator Execution
-    # In production, this would invoke exactly:
-    # state = await graph.ainvoke({"conversation_history": [request.message]})
-    # Here we simulate the routing to workers
-    
-    response_msg = ""
-    lower_msg = request.message.lower()
-    
-    if "gold" in lower_msg or "market" in lower_msg or "buy" in lower_msg:
-        response_msg = f"Based on your profile, I'm checking the real-time MCX Gold price via the Market Intelligence Agent, and fetching the latest ET Prime analysis for '{request.message}'."
-    elif "loan" in lower_msg:
-        response_msg = f"Let me connect you with the Marketplace Agent to compare SBI, HDFC, and Kotak rates considering your credit score."
+    """Main chat endpoint. Routes to the appropriate agent."""
+    user_id = request.user_id or "default_user"
+    session_id = request.session_id or str(uuid.uuid4())
+    profile = _get_profile(user_id)
+
+    # Detect sentiment and intent
+    sentiment = detect_sentiment(request.message)
+    intent = detect_intent(request.message)
+
+    # Route to agent
+    agent_name = route_to_agent(request.message, intent, profile)
+
+    # Execute agent
+    if agent_name == "profiling_agent":
+        agent_response = run_profiling_agent(request.message, profile)
+    elif agent_name == "editorial_agent":
+        agent_response = run_editorial_agent(request.message, profile)
+    elif agent_name == "market_intelligence_agent":
+        agent_response = run_market_intelligence_agent(request.message, profile)
+    elif agent_name == "marketplace_agent":
+        agent_response = run_marketplace_agent(request.message, profile)
     else:
-        response_msg = "I am the ET AI Concierge. I've routed your query through our Knowledge Graph. Here are the top insights..."
-        
-    return {"message": response_msg, "session_id": request.session_id}
+        agent_response = run_editorial_agent(request.message, profile)
+
+    # Check behavioral triggers
+    behavioral_response = run_behavioral_monitor(user_id, request.message)
+
+    # Apply compliance wrapper
+    agent_response = compliance_wrapper.wrap(agent_response, profile, session_id, intent.value)
+
+    # LLM synthesis (if available)
+    final_content = _llm_synthesize(agent_response, sentiment, request.message)
+
+    # Append behavioral nudge if any
+    if behavioral_response:
+        final_content += f"\n\n---\n{behavioral_response.content}"
+
+    # Add disclaimers
+    for disclaimer in agent_response.disclaimers:
+        if disclaimer not in final_content:
+            final_content += f"\n\n⚠️ *{disclaimer}*"
+
+    # Update session
+    session = _get_session(user_id) or SessionState(
+        user_id=user_id,
+        session_id=session_id,
+        modality=request.modality,
+    )
+    session.conversation_history.append(Message(role="user", content=request.message))
+    session.conversation_history.append(Message(role="assistant", content=final_content, agent_id=agent_name))
+    _save_session(user_id, session)
+
+    return ChatResponse(
+        message=final_content,
+        session_id=session_id,
+        agent_used=agent_name,
+        recommendations=agent_response.recommendations,
+        disclaimers=agent_response.disclaimers,
+    )
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """SSE streaming endpoint for the chat UI."""
+    async def generate() -> AsyncGenerator[str, None]:
+        # Get the full response first
+        response = await chat(request)
+        # Stream it token-by-token
+        words = response.message.split(" ")
+        for i, word in enumerate(words):
+            yield f"data: {json.dumps({'token': word + ' ', 'done': False})}\n\n"
+            await asyncio.sleep(0.03)
+        yield f"data: {json.dumps({'token': '', 'done': True, 'agent_used': response.agent_used})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/api/session/resume")
+async def resume_session(user_id: str, modality: str = "web"):
+    """Resume a session from another modality (voice → web handoff)."""
+    session = _get_session(user_id)
+
+    if session:
+        time_gap = session.minutes_since_last_interaction
+        last_messages = session.conversation_history[-3:] if session.conversation_history else []
+
+        # Generate transition message
+        if last_messages:
+            last_topic = last_messages[-1].content[:100]
+            transition_msg = (
+                f"Welcome back! You were asking about this earlier: \"{last_topic}...\" "
+                f"I've kept all the context from your {session.modality.value} session. "
+                f"Let's continue right where you left off."
+            )
+        else:
+            transition_msg = "Welcome back! Let's pick up where we left off."
+
+        return {
+            "session": session.model_dump(),
+            "transition_message": transition_msg,
+            "time_gap_minutes": round(time_gap, 1),
+        }
+
+    profile = _get_profile(user_id)
+    return {
+        "profile": profile.model_dump() if profile else None,
+        "is_new_session": True,
+        "transition_message": "Welcome to ET AI Concierge! I'm your Financial Life Navigator.",
+    }
+
+
+# ─── Onboarding Endpoints ────────────────────────────────────────────────────
+
+@app.get("/api/onboarding/start")
+async def start_onboarding(user_id: str = "default_user"):
+    """Start the onboarding flow."""
+    _onboarding_state[user_id] = {"step": 0, "answers": {}}
+    return get_onboarding_step(0).model_dump()
+
+
+@app.post("/api/onboarding/answer")
+async def answer_onboarding(request: OnboardingRequest):
+    """Submit an onboarding answer."""
+    user_id = request.user_id
+    state = _onboarding_state.get(user_id, {"step": 0, "answers": {}})
+
+    # Process the answer
+    state["answers"] = process_onboarding_answer(request.step, request.answer, state["answers"])
+    next_step = request.step + 1
+    state["step"] = next_step
+    _onboarding_state[user_id] = state
+
+    # Check if complete
+    if next_step > len(PROFILING_QUESTIONS):
+        result = complete_profiling(state["answers"])
+
+        # Update profile
+        profile = _get_profile(user_id)
+        profile.persona = result["persona"]
+        profile.onboarding_complete = True
+        profile.risk_score = state["answers"].get("risk_score", 5)
+        profile.interests = state["answers"].get("interests", [])
+        profile.primary_goal = state["answers"].get("primary_goal")
+        profile.income_type = state["answers"].get("income_type")
+        profile.age_group = state["answers"].get("age_group")
+        profile.profile_completeness = result["profile_completeness"]
+        _profiles[user_id] = profile
+
+        # Save to Postgres
+        update_user_profile(user_id, profile.model_dump())
+
+        return OnboardingResponse(
+            step=next_step,
+            is_complete=True,
+            persona=result["persona"],
+            recommended_tools=result["recommended_tools"],
+        ).model_dump()
+
+    return get_onboarding_step(next_step).model_dump()
+
+
+# ─── Behavioral Tracking Endpoints ───────────────────────────────────────────
+
+@app.post("/api/track/paywall")
+async def track_paywall(user_id: str = "default_user"):
+    """Track a paywall hit."""
+    track_paywall_hit(user_id)
+    behavioral = run_behavioral_monitor(user_id, "")
+    if behavioral:
+        return {"triggered": True, "message": behavioral.content, "recommendations": [r.model_dump() for r in behavioral.recommendations]}
+    return {"triggered": False}
+
+
+@app.get("/api/profile/{user_id}")
+async def get_profile(user_id: str):
+    """Get user profile."""
+    profile = _get_profile(user_id)
+    return profile.model_dump()
+
+
+# ─── Entry Point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
