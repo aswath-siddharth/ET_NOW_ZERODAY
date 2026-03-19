@@ -13,76 +13,54 @@ except ImportError:
     finnhub = None
 
 
-# ─── Finnhub Client ──────────────────────────────────────────────────────────
+# ─── Live Data Fetchers ────────────────────────────────────────────────────────
 
-def _get_finnhub_client():
-    if finnhub and settings.FINNHUB_API_KEY:
-        return finnhub.Client(api_key=settings.FINNHUB_API_KEY)
-    return None
+import yfinance as yf
+from duckduckgo_search import DDGS
 
-
-def finnhub_get_quote(symbol: str) -> Dict[str, Any]:
-    """Get real-time stock quote from Finnhub."""
-    client = _get_finnhub_client()
-    if client:
-        try:
-            quote = client.quote(symbol)
-            return {
-                "symbol": symbol,
-                "current_price": quote.get("c", 0),
-                "change": quote.get("d", 0),
-                "percent_change": quote.get("dp", 0),
-                "high": quote.get("h", 0),
-                "low": quote.get("l", 0),
-                "open": quote.get("o", 0),
-                "previous_close": quote.get("pc", 0),
-            }
-        except Exception as e:
-            return {"symbol": symbol, "error": str(e)}
-
-    # Mock data for demo/testing
-    mock_quotes = {
-        "AAPL": {"current_price": 178.50, "change": 2.30, "percent_change": 1.31},
-        "RELIANCE.NS": {"current_price": 2450.75, "change": 15.20, "percent_change": 0.62},
-        "TCS.NS": {"current_price": 3820.00, "change": -12.50, "percent_change": -0.33},
-        "GOLD": {"current_price": 62450.00, "change": 320.00, "percent_change": 0.51},
-        "NIFTY50": {"current_price": 22150.00, "change": 85.00, "percent_change": 0.39},
-        "SENSEX": {"current_price": 73200.00, "change": 280.00, "percent_change": 0.38},
-    }
-    default = {"current_price": 100.00, "change": 0.50, "percent_change": 0.50}
-    data = mock_quotes.get(symbol.upper(), default)
-    return {"symbol": symbol, **data}
-
+def get_real_time_quote(symbol: str) -> Dict[str, Any]:
+    """Get real-time stock quote from Yahoo Finance."""
+    try:
+        ns_symbol = symbol if symbol.startswith("^") else (symbol + ".NS" if not symbol.endswith(".NS") else symbol)
+        ticker = yf.Ticker(ns_symbol)
+        data = ticker.history(period="1d")
+        if data.empty:
+            return {"symbol": symbol, "error": f"Symbol {symbol} not found."}
+            
+        current_price = data['Close'].iloc[-1]
+        prev_close = ticker.info.get('previousClose', current_price)
+        change = current_price - prev_close
+        percent_change = (change / prev_close) * 100 if prev_close else 0
+        
+        return {
+            "symbol": symbol,
+            "current_price": round(current_price, 2),
+            "change": round(change, 2),
+            "percent_change": round(percent_change, 2),
+            "high": round(data['High'].iloc[-1], 2),
+            "low": round(data['Low'].iloc[-1], 2),
+            "open": round(data['Open'].iloc[-1], 2),
+            "previous_close": round(prev_close, 2)
+        }
+    except Exception as e:
+        return {"symbol": symbol, "error": str(e)}
 
 def finnhub_get_news(category: str = "general") -> List[Dict]:
-    """Get market news from Finnhub."""
-    client = _get_finnhub_client()
-    if client:
-        try:
-            import datetime
-            today = datetime.date.today()
-            week_ago = today - datetime.timedelta(days=7)
-            news = client.general_news(category, _from=str(week_ago), to=str(today))
-            return [{"headline": n.get("headline", ""), "url": n.get("url", "")} for n in news[:5]]
-        except Exception:
-            pass
-
-    return [
-        {"headline": "Nifty 50 crosses 22,000 mark; banking stocks lead the rally", "url": "#"},
-        {"headline": "RBI holds repo rate at 6.5%; signals dovish stance for Q1 2026", "url": "#"},
-        {"headline": "Gold prices hit all-time high amid global uncertainty", "url": "#"},
-    ]
-
+    """Get market news using DuckDuckGo News Search."""
+    try:
+        results = DDGS().news(f"India stock market {category}", max_results=5)
+        return [{"headline": n["title"], "url": n["url"]} for n in results]
+    except Exception:
+        return []
 
 def amfi_get_nav(scheme_code: str = "119551") -> Dict[str, Any]:
-    """Get mutual fund NAV from AMFI API."""
-    # Mock NAV data for hackathon
-    mock_navs = {
-        "119551": {"scheme": "SBI Blue Chip Fund", "nav": 78.45, "date": "2026-03-18"},
-        "120503": {"scheme": "HDFC Mid-Cap Fund", "nav": 156.20, "date": "2026-03-18"},
-        "100356": {"scheme": "Axis Long Term Equity", "nav": 82.30, "date": "2026-03-18"},
-    }
-    return mock_navs.get(scheme_code, {"scheme": "Unknown", "nav": 0, "date": ""})
+    """Get mutual fund NAV via live web search."""
+    try:
+        results = DDGS().text(f"{scheme_code} mutual fund latest NAV moneycontrol", max_results=2)
+        summary = " ".join([r['body'] for r in results])
+        return {"scheme": scheme_code, "nav": f"Live Data Search: {summary[:100]}...", "date": "Today"}
+    except Exception:
+        return {"scheme": scheme_code, "nav": "Error fetching live data", "date": ""}
 
 
 # ─── Portfolio Drift Detection ────────────────────────────────────────────────
@@ -146,7 +124,7 @@ def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> Ag
 
         content_parts.append("📊 **Real-Time Market Data:**\n")
         for sym in symbols:
-            quote = finnhub_get_quote(sym)
+            quote = get_real_time_quote("^NSEI" if sym == "NIFTY50" else "^BSESN" if sym == "SENSEX" else sym)
             direction = "🟢" if quote.get("change", 0) >= 0 else "🔴"
             content_parts.append(
                 f"{direction} **{sym}**: ₹{quote['current_price']:,.2f} "
@@ -157,7 +135,7 @@ def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> Ag
 
     # ── Gold Queries ──
     elif "gold" in msg_lower:
-        quote = finnhub_get_quote("GOLD")
+        quote = get_real_time_quote("GC=F") # Gold futures
         content_parts.append("🪙 **Gold Market Update:**\n")
         content_parts.append(
             f"MCX Gold: ₹{quote['current_price']:,.2f}/10g "
@@ -208,8 +186,8 @@ def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> Ag
 
     # ── Morning Briefing ──
     if "morning" in msg_lower or "briefing" in msg_lower:
-        nifty = finnhub_get_quote("NIFTY50")
-        sensex = finnhub_get_quote("SENSEX")
+        nifty = get_real_time_quote("^NSEI")
+        sensex = get_real_time_quote("^BSESN")
         content_parts = ["☀️ **Your Morning Briefing:**\n"]
         content_parts.append(
             f"Markets: Nifty {nifty['current_price']:,.0f} ({nifty.get('percent_change', 0):+.2f}%), "
