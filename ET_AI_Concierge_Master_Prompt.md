@@ -1,4 +1,4 @@
-# ET AI Concierge — Master Engineering Prompt
+# ET AI Concierge — Master Engineering Prompt (Zero-Cost Hackathon Edition)
 ### Complete Build Specification with Tech Stack
 
 ---
@@ -6,7 +6,7 @@
 ## 0. Project Identity
 
 **Product name:** ET AI Concierge — "Your Financial Life Navigator"
-**Platform target:** Web (Next.js), Mobile (React Native / Expo), Voice (Daily.co + Deepgram + ElevenLabs)
+**Platform target:** Web (Next.js), Mobile (React Native / Expo), Voice (Daily.co + Whisper + Edge TTS)
 **Architecture style:** Multi-Agent System (MAS) with Orchestrator-Worker pattern
 **Primary language:** TypeScript (frontend + API layer), Python (agent backend)
 **Deadline context:** ET GenAI Hackathon 2026 — Phase 2 prototype by March 29, 2026
@@ -20,40 +20,40 @@ The Economic Times ecosystem spans ET Prime (editorial analysis), ET Markets (tr
 
 ---
 
-## 2. Full Tech Stack (Canonical Reference)
+## 2. Full Tech Stack (Zero-Cost Canonical Reference)
 
 ### 2.1 Backend — Agent Runtime
 
-| Concern | Tool | Why |
+| Concern | Tool | Why (Zero Cost Justification) |
 |---|---|---|
-| Agent orchestration | **LangGraph (Python)** | Stateful, graph-based multi-agent workflows; native checkpointing |
-| LLM | **Claude Sonnet 4.5** (`claude-sonnet-4-5-20251001`) | Best tool-use accuracy; already used in Artifact layer; no model-switching overhead |
-| Agent memory (persistent) | **Mem0** | Cross-session user profile memory; financial goals persist between logins |
-| Short-term session state | **Redis (Upstash)** | Ephemeral in-flight conversation state; sub-1ms reads |
-| Durable user profiles | **Supabase (PostgreSQL)** | User personas, risk scores, goal states, onboarding results |
-| Task queue | **Celery + Redis** | Async background jobs: portfolio drift checks, proactive nudges |
-| API gateway | **FastAPI** | All agent tool endpoints; async-native; OpenAPI schema auto-generation |
+| Agent orchestration | **LangGraph (Python)** | Free, open-source stateful multi-agent workflows; native checkpointing. |
+| LLM (Brain) | **Groq API (Llama 3.3 70B)** | Generous free tier; ultra-fast inference (<1s response) perfect for agent chaining. |
+| Agent memory (persistent) | **Mem0 (Open Source)** | `pip install mem0ai` uses local SQLite/ChromaDB. Same API as cloud, completely free. |
+| Short-term session state | **Redis (Local)** | Run locally via Docker. 0ms latency, zero cost. |
+| Durable user profiles | **PostgreSQL (Local)** | Run locally via Docker. Replaces expensive managed Supabase for the hackathon. |
+| Task queue | **Celery + Redis** | Async background jobs; runs fully locally. |
+| API gateway | **FastAPI** | Free, async-native, auto-generates OpenAPI schema. |
 
-### 2.2 Retrieval — RAG Pipeline
+### 2.2 Retrieval — RAG Pipeline (Fully Localized)
 
-| Concern | Tool | Why |
+| Concern | Tool | Why (Zero Cost Justification) |
 |---|---|---|
-| Vector store | **Qdrant** (self-hosted) | Open-source; data stays on Indian servers (DPDP Act compliance) |
-| Lexical search | **BM25 (Elasticsearch)** | Exact ticker/entity matching ("MRF", "Nifty 50") |
-| Hybrid fusion | **Reciprocal Rank Fusion (RRF)** | Merges vector + lexical result sets without score normalization complexity |
-| Reranker | **Cohere Rerank v3** | Cross-encoder precision on financial text; significant generation quality lift |
-| Knowledge graph | **Neo4j Aura** | GraphRAG: entity relationships (policy → sector → stock → outcome) |
-| Embedding model | **text-embedding-3-large (OpenAI)** | 3072-dim; best financial text clustering in benchmarks |
-| Document ingestion | **LlamaIndex** | Chunk ETL pipeline for ET Prime articles, PDFs, market reports |
+| Vector store | **Qdrant (Local Docker)** | Open-source; runs locally. Ensures DPDP Act compliance automatically. |
+| Lexical search | **BM25 (Elasticsearch)** | Exact entity matching. Run locally via Docker. |
+| Hybrid fusion | **Reciprocal Rank Fusion (RRF)** | Mathematical algorithm (no API cost) to merge vector + lexical results. |
+| Reranker | **BAAI/bge-reranker-base** | HuggingFace CrossEncoder. Runs locally. Matches Cohere's performance for free. |
+| Knowledge graph | **Neo4j Community Edition** | GraphRAG. Run locally via Docker instead of Aura cloud. |
+| Embedding model | **BAAI/bge-large-en-v1.5** | HuggingFace local model. Top of the open-source leaderboard; 0 API costs. |
+| Document ingestion | **LlamaIndex** | Free Python ETL pipeline for parsing ET articles into chunks. |
 
 ### 2.3 Voice Stack
 
-| Concern | Tool | Why |
+| Concern | Tool | Why (Zero Cost Justification) |
 |---|---|---|
-| STT | **Deepgram Nova-3** | 54.2% lower WER on noisy audio; <300ms latency; Hindi-English code-switch support |
-| TTS | **ElevenLabs Expressive Mode** | Emotionally intelligent voice; adapts tone to financial context (calm vs. urgent) |
-| Real-time audio transport | **Daily.co** | Cleaner React + React Native SDK than LiveKit; built-in room state; cross-platform |
-| Voice pipeline orchestration | **LiveKit Agents SDK** | Thin wrapper connecting Deepgram → LangGraph → ElevenLabs in <500ms E2E |
+| STT (Speech-to-Text) | **Groq Whisper API** | Free tier available. Highly accurate for Indian accents and English-Hindi mix. |
+| TTS (Text-to-Speech) | **Edge TTS (Python)** | Free wrapper around Azure's read-aloud. Excellent Indian voices (`en-IN-NeerjaNeural`). |
+| Real-time audio transport| **Daily.co** | Free tier includes 10,000 minutes/month. Perfect for hackathon dev and demos. |
+| Voice pipeline orchestration | **FastAPI WebSockets** | Connect STT -> LangGraph -> TTS streaming locally to bypass expensive LiveKit Cloud. |
 
 ### 2.4 Frontend
 
@@ -71,35 +71,29 @@ The Economic Times ecosystem spans ET Prime (editorial analysis), ET Markets (tr
 
 | Data | Source | Notes |
 |---|---|---|
-| Real-time market data | **Finnhub API** | Nifty 50, Sensex, MCX Gold, stock quotes |
+| Real-time market data | **Finnhub API** | Free tier provides sufficient US/Global stock quotes for testing logic. |
 | ET Prime content | **ET internal RAG corpus** | Ingest via LlamaIndex; refresh every 15 min |
 | Mutual fund NAVs | **AMFI API** (free, official) | Real NAV data; no third-party dependency |
 | RBI policy / rates | **RBI public RSS + scraper** | Monetary policy, repo rate, regulatory circulars |
 | Home loan rates | **Partner bank simulators** | SBI, HDFC, Kotak — mock APIs for hackathon; schema matches real APIs |
-| Weather (cross-sell triggers) | **OpenWeatherMap API** | Location-based contextual offers |
+| Weather (cross-sell triggers) | **OpenWeatherMap API** | Free tier is more than enough for location-based context |
 | User location | **Browser Geolocation API** | Smart city + regional offer personalization |
 
 ### 2.6 Observability & Compliance
 
 | Concern | Tool | Why |
 |---|---|---|
-| Agent tracing | **LangSmith** | Native LangGraph integration; every agent step logged with input/output |
-| Error tracking | **Sentry** | Frontend + backend; session replays for demo debugging |
+| Agent tracing | **LangSmith** | Native LangGraph integration; free developer tier available. |
+| Error tracking | **Sentry** | Frontend + backend; free developer tier. |
 | Compliance audit log | **Custom Postgres table** | Every AI recommendation logged: agent ID, timestamp, reasoning, user ID |
-| HITL escalation | **Zendesk webhook** | Trigger human handoff on high-stakes actions (large fund transfers, claim disputes) |
-| Bias monitoring | **Arize AI (free tier)** | Drift detection on recommendation distribution |
-| Secrets management | **Doppler** | No `.env` files in repo; inject at runtime |
+| HITL escalation | **Zendesk webhook** | Trigger human handoff on high-stakes actions |
+| Secrets management | **Doppler** | No `.env` files in repo; inject at runtime (Free tier) |
 
 ### 2.7 Infrastructure
 
 | Concern | Tool |
 |---|---|
-| Containerization | Docker + Docker Compose |
-| Cloud (primary) | AWS Mumbai region (ap-south-1) — data localization |
-| Serverless functions | AWS Lambda (Python) for background agents |
-| CDN | CloudFront |
-| CI/CD | GitHub Actions |
-| Local dev | `docker-compose up` — entire stack runs locally |
+| Local dev environment | `docker-compose up -d` — entire backend stack runs locally (Postgres, Redis, Qdrant, Elastic, Neo4j) |
 
 ---
 
@@ -122,14 +116,15 @@ tools = [
     route_to_market_intelligence_agent,
     route_to_marketplace_agent,
     route_to_behavioral_monitor,
-    get_user_profile,          # reads from Mem0 + Supabase
-    update_user_profile,       # writes back to Mem0
+    get_user_profile,          # reads from local Mem0 + Postgres
+    update_user_profile,       # writes back to local Mem0
     detect_sentiment,          # frustrated / confident / curious / anxious
     detect_intent,             # inform / transact / learn / discover
 ]
 ```
 
 **System prompt to encode:**
+
 ```
 You are the ET AI Concierge — a Financial Life Navigator for The Economic Times ecosystem.
 Your job is not to answer questions. Your job is to understand the user's complete financial life
@@ -152,6 +147,7 @@ When you synthesize the final response:
 ```
 
 **State schema:**
+
 ```typescript
 interface ConciergeState {
   userId: string;
@@ -169,7 +165,7 @@ interface ConciergeState {
 
 ### Agent 1 — Profiling Agent (ET Welcome Concierge)
 
-**Role:** Onboards new users in under 3 minutes. Converts a first-time visitor into a high-fidelity financial persona. Writes the result to Mem0 and Supabase.
+**Role:** Onboards new users in under 3 minutes. Converts a first-time visitor into a high-fidelity financial persona. Writes the result to Mem0 and Postgres.
 
 **Trigger:** First session OR profile completeness score < 60%.
 
@@ -211,43 +207,8 @@ Step 4 — Deliver personalized onboarding path
   Save full profile to Mem0 with tags for the Behavioral Monitor.
 ```
 
-**Persona → product mapping table (encode as JSON in agent config):**
-```json
-{
-  "PERSONA_CONSERVATIVE_SAVER": {
-    "primary_tools": ["ET Wealth Edition", "NPS Calculator", "FD Rate Tracker"],
-    "et_prime_sections": ["Personal Finance", "Tax Saving"],
-    "masterclass": null,
-    "marketplace_products": ["Fixed Deposits", "NPS", "Health Insurance"]
-  },
-  "PERSONA_ACTIVE_TRADER": {
-    "primary_tools": ["Alpha Trades", "Stock Reports Plus", "Candlestick Screener", "RSI Screener"],
-    "et_prime_sections": ["Markets", "Tech", "Corporate Governance"],
-    "masterclass": "Technical Analysis Masterclass",
-    "marketplace_products": ["Demat Account", "Margin Loans"]
-  },
-  "PERSONA_YOUNG_PROFESSIONAL": {
-    "primary_tools": ["ET Wealth SIP Guide", "Young Mind Program", "AI for Business Leaders"],
-    "et_prime_sections": ["Startups", "Tech", "Career"],
-    "masterclass": "Young Mind Entrepreneurship Program",
-    "marketplace_products": ["SIP platforms", "Term Insurance", "Credit Card"]
-  },
-  "PERSONA_CORPORATE_EXECUTIVE": {
-    "primary_tools": ["ET Prime", "Wealth Edition", "Today's ePaper"],
-    "et_prime_sections": ["Corporate Governance", "Aviation", "Auto", "Pharma"],
-    "masterclass": "Strategic Leadership Masterclass",
-    "marketplace_products": ["Premium Credit Cards", "Portfolio Management Services"]
-  },
-  "PERSONA_HOME_BUYER": {
-    "primary_tools": ["Home Loan EMI Calculator", "Loan Marketplace", "RBI Rate Tracker"],
-    "et_prime_sections": ["Real Estate", "Digital Real Estate", "Infrastructure"],
-    "masterclass": "Build Passive Income with Mutual Funds",
-    "marketplace_products": ["Home Loans (SBI, HDFC, Kotak)", "Home Insurance"]
-  }
-}
-```
+**Output written to Mem0 (Local OSS Version):**
 
-**Output written to Mem0:**
 ```python
 mem0_client.add(
     messages=[{"role": "system", "content": f"User profile: {json.dumps(profile)}"}],
@@ -267,27 +228,31 @@ mem0_client.add(
 
 ### Agent 2 — Editorial Agent
 
-**Role:** Surfaces the right ET Prime / ET Wealth content for any user query or behavioral signal. Uses the full RAG pipeline.
+**Role:** Surfaces the right ET Prime / ET Wealth content for any user query or behavioral signal. Uses the fully local RAG pipeline.
 
 **Tools:**
+
 ```python
 tools = [
-    hybrid_rag_search,          # vector + BM25 over ET Prime corpus
+    hybrid_rag_search,          # vector (Qdrant) + BM25 (Elastic) over ET Prime corpus
     graph_rag_entity_search,    # Neo4j: find related entities/articles
-    cohere_rerank,              # rerank top-20 results to top-3
+    local_cross_encoder_rerank, # rerank top-20 results to top-3 using bge-reranker
     get_user_interests,         # pull from Mem0 to personalize search
     check_paywall_status,       # determine if user has ET Prime subscription
     generate_article_summary,   # 3-sentence summary of retrieved article
 ]
 ```
 
-**RAG pipeline implementation:**
+**RAG pipeline implementation (Zero Cost):**
+
 ```python
 async def editorial_rag_pipeline(query: str, user_profile: UserProfile) -> list[Article]:
     # Step 1: Hybrid retrieval
+    query_vector = local_embedding_model.encode(query) # Using BAAI/bge-large-en-v1.5
+    
     vector_results = await qdrant_client.search(
         collection_name="et_prime_articles",
-        query_vector=embed(query),
+        query_vector=query_vector,
         limit=10,
         query_filter=Filter(must=[
             FieldCondition(key="sector", match=MatchAny(any=user_profile.interests))
@@ -309,41 +274,15 @@ async def editorial_rag_pipeline(query: str, user_profile: UserProfile) -> list[
     )
     fused.extend(graph_related)
 
-    # Step 4: Rerank
-    reranked = await cohere_client.rerank(
+    # Step 4: Rerank locally
+    reranked = await local_cross_encoder.predict(
         query=query,
         documents=[r.text for r in fused],
-        model="rerank-english-v3.0",
+        model="BAAI/bge-reranker-base",
         top_n=3
     )
 
     return reranked
-```
-
-**Context-sensitive intent routing:**
-```python
-# Same query, different outputs by persona
-if user_profile.persona == "PERSONA_ACTIVE_TRADER":
-    # "Tell me about gold" → real-time MCX Gold price + technical analysis article
-    return await market_intelligence_agent.get_gold_technical(user_id)
-elif user_profile.persona == "PERSONA_CORPORATE_EXECUTIVE":
-    # "Tell me about gold" → ET Prime exclusive on GIFT City gold volumes
-    return await editorial_rag_pipeline("gold GIFT City volumes plunging", user_profile)
-elif user_profile.persona == "PERSONA_CONSERVATIVE_SAVER":
-    # "Tell me about gold" → sovereign gold bonds comparison vs physical gold
-    return await editorial_rag_pipeline("sovereign gold bond vs physical gold returns", user_profile)
-```
-
-**Paywall handling:**
-```python
-if not user.has_et_prime_subscription:
-    response.append({
-        "type": "paywall_nudge",
-        "message": "This exclusive analysis is from ET Prime.",
-        "cta": "You've read 3 premium stories today. Get full access for ₹199/month.",
-        "deeplink": "https://buy.indiatimes.com/ET/plans",
-        "trigger": "USAGE_LIMIT_REACHED"   # signals Cross-Sell Engine
-    })
 ```
 
 ---
@@ -353,9 +292,10 @@ if not user.has_et_prime_subscription:
 **Role:** Real-time market data, technical signals, portfolio analysis, and "Big Bull" portfolio tracking via ET Markets.
 
 **Tools:**
+
 ```python
 tools = [
-    finnhub_get_quote,              # real-time stock/index prices
+    finnhub_get_quote,              # real-time stock/index prices (free tier)
     finnhub_get_news,               # market news feed
     finnhub_get_recommendation,     # analyst buy/sell recommendations
     amfi_get_nav,                   # mutual fund NAV (official AMFI API)
@@ -367,43 +307,6 @@ tools = [
 ]
 ```
 
-**Portfolio drift detection:**
-```python
-def calculate_portfolio_drift(
-    current_allocation: dict,   # {"equity": 0.72, "debt": 0.18, "gold": 0.10}
-    target_allocation: dict,    # {"equity": 0.60, "debt": 0.30, "gold": 0.10}
-    threshold: float = 0.05
-) -> DriftReport:
-    drifts = {
-        asset: abs(current_allocation[asset] - target_allocation[asset])
-        for asset in current_allocation
-    }
-    max_drift = max(drifts.values())
-    requires_rebalance = max_drift > threshold
-
-    if requires_rebalance:
-        return DriftReport(
-            alert=True,
-            message=f"Your equity allocation has drifted {max_drift*100:.1f}% above target.",
-            suggestion="Consider rebalancing by increasing your debt allocation.",
-            et_tool_deeplink="https://economictimes.indiatimes.com/markets/portfolio",
-            et_prime_article=editorial_agent.search("portfolio rebalancing strategy 2025")
-        )
-```
-
-**Morning briefing parallel fan-out (LangGraph pattern):**
-```python
-# Orchestrator spawns these simultaneously — results gathered and synthesized
-async def morning_briefing(user_id: str) -> Briefing:
-    results = await asyncio.gather(
-        market_intelligence_agent.get_index_summary(),    # Nifty/Sensex overnight moves
-        editorial_agent.get_top_stories(user_id),         # personalized ET Prime top 3
-        market_intelligence_agent.get_portfolio_update(user_id),  # portfolio vs yesterday
-        get_weather_for_location(user_id),                # location-based context
-    )
-    return orchestrator.synthesize_briefing(results, user_id)
-```
-
 ---
 
 ### Agent 4 — Marketplace Agent
@@ -411,6 +314,7 @@ async def morning_briefing(user_id: str) -> Briefing:
 **Role:** Financial product intermediation. Acts as a fiduciary, not a salesperson. Matches users to loans, cards, insurance, and investment products from partner institutions.
 
 **Tools:**
+
 ```python
 tools = [
     calculate_emi,                      # home/car/personal loan EMI
@@ -425,68 +329,6 @@ tools = [
     pre_fill_application_form,          # reduce form friction; uses extracted data
     escalate_to_human,                  # HITL for high-stakes decisions
 ]
-```
-
-**Zero-trust data handling (encode in every tool that touches PII):**
-```python
-class PrivacyFilter:
-    """Strip PII before any LLM call. Only minimum necessary data to the model."""
-    ALLOWED_FIELDS_FOR_LLM = ["credit_score_band", "loan_amount", "tenure_months",
-                               "income_band", "employer_type", "age_group"]
-
-    def sanitize_for_llm(self, user_data: dict) -> dict:
-        return {k: v for k, v in user_data.items() if k in self.ALLOWED_FIELDS_FOR_LLM}
-```
-
-**Loan recommendation with personalized ranking:**
-```python
-async def get_loan_recommendations(user: UserProfile, loan_amount: int, tenure: int):
-    all_offers = await compare_loan_rates(loan_amount, tenure)
-
-    # Rank by approval probability first, then by rate
-    ranked = sorted(
-        all_offers,
-        key=lambda x: (
-            -calculate_approval_probability(user, x),   # higher probability first
-            x.interest_rate                              # then lower rate
-        )
-    )
-
-    # Consultative framing — guided, not sold
-    return {
-        "top_pick": ranked[0],
-        "reasoning": f"Based on your credit profile and employer type, "
-                     f"{ranked[0].bank} has a ~{ranked[0].approval_probability}% "
-                     f"approval likelihood for you at {ranked[0].rate}% p.a.",
-        "alternatives": ranked[1:3],
-        "et_article": await editorial_agent.search("home loan tips first-time buyer 2025"),
-        "escalate_available": True
-    }
-```
-
-**HITL escalation trigger:**
-```python
-HITL_TRIGGERS = [
-    lambda action: action.type == "FUND_TRANSFER" and action.amount > 100000,
-    lambda action: action.type == "INSURANCE_CLAIM",
-    lambda action: action.type == "LOAN_APPLICATION_SUBMIT",
-    lambda action: user.sentiment == "FRUSTRATED" and action.type == "COMPLAINT",
-]
-
-async def execute_with_hitl_check(action: AgentAction, user: UserProfile):
-    if any(trigger(action) for trigger in HITL_TRIGGERS):
-        await zendesk_webhook.create_ticket(
-            subject=f"HITL Required: {action.type}",
-            user_id=user.id,
-            conversation_context=action.conversation_summary,
-            priority="high"
-        )
-        return HumanHandoffResponse(
-            message="I'm connecting you with a specialist who can help with this directly.",
-            estimated_wait="< 2 minutes",
-            ticket_id=ticket.id
-        )
-    return await execute_action(action)
 ```
 
 ---
@@ -538,14 +380,6 @@ BEHAVIORAL_TRIGGERS = [
         "message": "I found an ET Wealth guide on maximizing your 80C limit "
                    "and the NPS calculator to see your exact tax saving.",
     },
-    {
-        "name": "YOUNG_MIND_HEAVY_USER",
-        "condition": lambda s: s.page_views["young-mind"] >= 5
-                               and not s.enrolled_in["young-mind-program"],
-        "action": "offer_young_mind_enrollment",
-        "message": "You've been exploring the Young Mind content a lot. "
-                   "The full program opens 8 live mentorship sessions with founders.",
-    },
 ]
 ```
 
@@ -556,16 +390,17 @@ BEHAVIORAL_TRIGGERS = [
 This is the single most impressive feature to demo. Implement it completely.
 
 **Architecture:**
+
 ```
 User starts on voice (driving)
-  → Deepgram STT transcribes
-  → LangGraph processes, updates session in Redis
-  → ElevenLabs speaks response
-  → Session ID stored in Mem0 with full context
+  → Groq Whisper STT transcribes
+  → LangGraph processes via Llama 3.3, updates session in local Redis
+  → Edge TTS speaks response
+  → Session ID stored in local Mem0 with full context
 
 User opens web app 30 minutes later
   → Frontend calls GET /api/session/resume?userId=X
-  → Redis returns active session context
+  → Local Redis returns active session context
   → Web UI renders conversation history
   → "Welcome back. You were asking about home loans earlier. 
      Here's the SBI vs HDFC comparison I mentioned."
@@ -573,42 +408,24 @@ User opens web app 30 minutes later
 ```
 
 **Session resume API endpoint:**
+
 ```python
 @app.get("/api/session/resume")
 async def resume_session(user_id: str, modality: str):
-    # Pull from Redis (recent session) or Mem0 (historical)
+    # Pull from Local Redis (recent session) or Local Mem0 (historical)
     recent = await redis_client.get(f"session:{user_id}:latest")
     if recent:
         session = SessionState(**json.loads(recent))
-        # Generate a transition message
+        # Generate a transition message using Groq Llama 3.3
         transition_msg = await orchestrator.generate_transition_message(
             session=session,
             new_modality=modality,
             time_gap_minutes=session.minutes_since_last_interaction
         )
         return {"session": session, "transition_message": transition_msg}
-    # Fall back to full profile from Mem0
+    # Fall back to full profile from local Mem0
     profile = await mem0_client.get_all(user_id=user_id)
     return {"profile": profile, "is_new_session": True}
-```
-
-**Frontend session resume component (Next.js):**
-```tsx
-// app/dashboard/page.tsx
-export default async function Dashboard() {
-  const session = await resumeSession(userId, 'web');
-
-  return (
-    <div>
-      {session.transition_message && (
-        <TransitionBanner message={session.transition_message} />
-        // "Welcome back. Continuing from your voice conversation —
-        //  here's the home loan comparison you asked about."
-      )}
-      <ConciergeChat initialMessages={session.conversation_history} />
-    </div>
-  );
-}
 ```
 
 ---
@@ -636,7 +453,7 @@ class ComplianceWrapper:
             "agent_id": agent_response.agent_id,
             "recommendation_type": agent_response.type,
             "reasoning": agent_response.reasoning_trace,
-            "model_used": "claude-sonnet-4-5",
+            "model_used": "llama-3.3-70b-versatile",
             "data_sources": agent_response.sources,
         })
 
@@ -645,13 +462,10 @@ class ComplianceWrapper:
             return self.escalate_to_human(agent_response, user)
 
         return agent_response
-
-    def requires_human_oversight(self, response: AgentResponse) -> bool:
-        HIGH_STAKES_TYPES = ["LOAN_APPLICATION", "INSURANCE_CLAIM", "LARGE_TRANSFER"]
-        return response.type in HIGH_STAKES_TYPES or response.confidence_score < 0.7
 ```
 
-**Audit log schema (Postgres):**
+**Audit log schema (Local Postgres):**
+
 ```sql
 CREATE TABLE ai_audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -686,43 +500,6 @@ Build these screens. Nothing more for the hackathon.
 /profile                → User persona, risk score, goals (read/edit)
 ```
 
-**Chat UI — streaming implementation (Next.js + SSE):**
-```tsx
-// components/ConciergeChat.tsx
-export function ConciergeChat() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-
-  const sendMessage = async (userMessage: string) => {
-    setIsStreaming(true);
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({ message: userMessage, sessionId }),
-    });
-
-    const reader = response.body!.getReader();
-    let agentMessage = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = new TextDecoder().decode(value);
-      agentMessage += chunk;
-      setMessages(prev => updateLastMessage(prev, agentMessage)); // live token streaming
-    }
-    setIsStreaming(false);
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      <MessageList messages={messages} />
-      {isStreaming && <TypingIndicator agentName="ET Concierge" />}
-      <VoiceOrTextInput onSend={sendMessage} />
-    </div>
-  );
-}
-```
-
 ---
 
 ## 7. Demo Script for Judges
@@ -733,7 +510,7 @@ Build your hackathon demo around this exact 4-minute narrative:
 [0:00 – 0:45] — Voice onboarding
   Show voice interface. User speaks: "I'm a 28-year-old software engineer.
   I want to start investing but I don't know where."
-  Profiling Agent asks 3 follow-up questions via ElevenLabs voice.
+  Profiling Agent asks 3 follow-up questions via Edge TTS voice.
   Result: PERSONA_YOUNG_PROFESSIONAL mapped. Onboarding path displayed.
 
 [0:45 – 1:30] — Financial Life Navigator in action
@@ -796,11 +573,11 @@ et-ai-concierge/
 │   │   ├── ingestion/
 │   │   ├── retrieval/
 │   │   └── reranking/
-│   ├── voice/                  # Daily.co + Deepgram + ElevenLabs
+│   ├── voice/                  # Daily.co + Whisper + Edge TTS
 │   └── shared/                 # TypeScript types shared across web/mobile
 ├── infra/
-│   ├── docker-compose.yml      # local dev: all services
-│   └── aws/                    # production CDK stack
+│   ├── docker-compose.yml      # local dev: Postgres, Redis, Qdrant, Elastic, Neo4j
+│   └── aws/                    # production CDK stack (optional for hackathon)
 ├── scripts/
 │   ├── ingest_et_prime.py      # seed RAG corpus
 │   └── seed_personas.py        # seed test user profiles
@@ -814,43 +591,36 @@ et-ai-concierge/
 ## 9. Environment Variables (via Doppler)
 
 ```bash
-# LLM
-ANTHROPIC_API_KEY=
+# LLM & STT (Free Tier APIs)
+GROQ_API_KEY=your_free_groq_key
 
-# Voice
-DEEPGRAM_API_KEY=
-ELEVENLABS_API_KEY=
-DAILY_API_KEY=
+# Voice Transport (Free Tier)
+DAILY_API_KEY=your_free_daily_key
 
-# Memory & State
-MEM0_API_KEY=
-UPSTASH_REDIS_URL=
-UPSTASH_REDIS_TOKEN=
-SUPABASE_URL=
-SUPABASE_SERVICE_KEY=
+# Memory & State (Local - No API Keys Needed)
+REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=postgresql://user:password@localhost:5432/et_concierge
 
-# Vector & Search
-QDRANT_URL=
-QDRANT_API_KEY=
-ELASTICSEARCH_URL=
-COHERE_API_KEY=
+# Vector & Search (Local Docker)
+QDRANT_URL=http://localhost:6333
+ELASTICSEARCH_URL=http://localhost:9200
 
-# Knowledge Graph
-NEO4J_URI=
-NEO4J_USER=
-NEO4J_PASSWORD=
+# Knowledge Graph (Local Docker)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=local_password
 
-# Market Data
-FINNHUB_API_KEY=
-OPENWEATHERMAP_API_KEY=
+# External Data (Free Tiers)
+FINNHUB_API_KEY=your_free_finnhub_key
+OPENWEATHERMAP_API_KEY=your_free_weather_key
 
 # Observability
-LANGSMITH_API_KEY=
-SENTRY_DSN=
+LANGSMITH_API_KEY=your_free_langsmith_key
+SENTRY_DSN=your_free_sentry_dsn
 
 # Compliance
-ZENDESK_API_KEY=
-ZENDESK_SUBDOMAIN=
+ZENDESK_API_KEY=your_free_zendesk_key
+ZENDESK_SUBDOMAIN=your_free_zendesk_subdomain
 ```
 
 ---
@@ -858,19 +628,13 @@ ZENDESK_SUBDOMAIN=
 ## 10. Hackathon Submission Checklist
 
 - [ ] GitHub repo named `TeamName_TeamLeader_Jazzee2025`
-- [ ] All five agents implemented and wired in LangGraph
-- [ ] Voice → Web multi-modal handoff working end-to-end
-- [ ] Profiling Agent completes in < 3 minutes (time it)
-- [ ] Compliance wrapper on every agent response
-- [ ] Audit log table populated during demo
-- [ ] LangSmith trace visible during demo (open in second tab)
-- [ ] HITL escalation triggered at least once in demo
-- [ ] Behavioral Monitor fires at least 2 cross-sell triggers in demo
-- [ ] Pitch video (YouTube, unlisted) — 4-minute demo script above
+- [ ] `docker-compose.yml` included and fully working for local DBs/Vector stores
+- [ ] All five agents implemented in LangGraph utilizing Groq/Llama 3.3
+- [ ] Voice interface built using Whisper + Edge TTS
+- [ ] Profiling Agent completes in < 3 minutes
+- [ ] Local RAG pipeline retrieves ET Prime mock data successfully
+- [ ] Multi-modal handoff working end-to-end
+- [ ] Pitch video (YouTube, unlisted) — 4-minute demo script showing the features working
 - [ ] PDF document: problem statement, architecture diagram, impact metrics
-- [ ] AI tool declaration included (list all GenAI tools used in ideation)
+- [ ] AI tool declaration included
 - [ ] Submission via Unstop platform before March 29, 2026
-
----
-
-*Built for the ET GenAI Hackathon 2026. Every Indian deserves a personal guide to their financial life.*

@@ -1,8 +1,7 @@
 qdrant-client
 elasticsearch
-cohere
 neo4j
 llama-index
-openai
+sentence-transformers
 langchain
 python-dotenv
