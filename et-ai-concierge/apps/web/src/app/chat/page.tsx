@@ -1,0 +1,222 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { Mic, Send, Bot, User, ShieldAlert, BadgeInfo } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card } from "@/components/ui/card";
+
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  agentUsed?: string;
+  recommendations?: any[];
+  disclaimers?: string[];
+};
+
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "1",
+      role: "assistant",
+      content: "Hello! I'm your ET AI Concierge. I can help you with market intelligence, home loans, ET Prime insights, or anything related to your financial life. How can I help you today?",
+    }
+  ]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const userMsg = input;
+    setInput("");
+    const msgId = Date.now().toString();
+    
+    setMessages(prev => [...prev, { id: msgId, role: "user", content: userMsg }]);
+    setIsLoading(true);
+
+    const asstMsgId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, { id: asstMsgId, role: "assistant", content: "" }]);
+
+    try {
+      const response = await fetch("http://localhost:8000/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: "test_user_123",
+          message: userMsg,
+          modality: "web"
+        })
+      });
+
+      if (!response.body) throw new Error("No body");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split("\n\n");
+        
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.token) {
+                setMessages(prev => prev.map(m => 
+                  m.id === asstMsgId ? { ...m, content: m.content + data.token } : m
+                ));
+              }
+              if (data.done) {
+                setMessages(prev => prev.map(m => 
+                  m.id === asstMsgId ? { ...m, agentUsed: data.agent_used } : m
+                ));
+              }
+            } catch (err) {}
+          }
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setMessages(prev => [...prev, { id: "err", role: "assistant", content: "Sorry, I encountered an error. Please try again." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getAgentBadge = (agentId?: string) => {
+    if (!agentId) return null;
+    const names: Record<string, string> = {
+      profiling_agent: "Profiling",
+      editorial_agent: "ET Prime",
+      market_intelligence_agent: "Markets",
+      marketplace_agent: "Marketplace",
+      behavioral_monitor: "Cross-Sell",
+    };
+    return names[agentId] || agentId;
+  };
+
+  return (
+    <div className="flex h-screen bg-background">
+      {/* Sidebar (Optional) */}
+      <div className="w-64 border-r border-border/40 hidden md:flex flex-col p-4 bg-card/10 backdrop-blur-md">
+        <h2 className="font-bold text-lg mb-6 flex items-center gap-2">
+          <span className="w-6 h-6 rounded bg-primary text-white flex items-center justify-center text-xs">ET</span>
+          Navigator
+        </h2>
+        
+        <div className="space-y-2 flex-1 overflow-auto">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Recent Chats</div>
+          <Button variant="ghost" className="w-full justify-start text-sm font-normal">Home Loan Comparison</Button>
+          <Button variant="ghost" className="w-full justify-start text-sm font-normal">Gold Investment Ideas</Button>
+          <Button variant="ghost" className="w-full justify-start text-sm font-normal">Portfolio Rebalance</Button>
+        </div>
+
+        <div className="mt-auto pt-4 border-t border-border/40">
+          <div className="text-xs bg-secondary p-3 rounded-lg flex items-start gap-2 text-muted-foreground">
+            <ShieldAlert className="w-4 h-4 shrink-0 text-primary" />
+            Advice is generated by AI. Please consult a registered advisor.
+          </div>
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col h-full bg-[url('/bg-grid.svg')] bg-cover">
+        {/* Header */}
+        <header className="h-14 border-b border-border/40 flex items-center px-4 backdrop-blur-md sticky top-0 bg-background/50 z-10">
+          <div className="md:hidden font-bold mr-auto">ET Concierge</div>
+          <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+            <BadgeInfo className="w-4 h-4" /> Multi-Agent Active
+          </div>
+        </header>
+
+        {/* Messages */}
+        <ScrollArea className="flex-1 py-6 px-4 md:px-8">
+          <div className="max-w-3xl mx-auto space-y-8 pb-10">
+            {messages.map((m) => (
+              <div key={m.id} className={`flex gap-4 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${m.role === "user" ? "bg-secondary" : "bg-primary/20 text-primary"}`}>
+                  {m.role === "user" ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
+                </div>
+                
+                <div className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"} max-w-[85%]`}>
+                  <Card className={`px-5 py-4 ${m.role === "user" ? "bg-primary text-primary-foreground border-transparent" : "bg-card/80 border-border/50 shadow-sm"}`}>
+                    {/* Render standard markdown for assistant msg */}
+                    {m.role === "assistant" ? (
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {m.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="text-sm whitespace-pre-wrap">{m.content}</div>
+                    )}
+                  </Card>
+                  
+                  {/* Agent Badge for assistant msgs */}
+                  {m.agentUsed && (
+                    <div className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-full inline-flex">
+                      Agent: {getAgentBadge(m.agentUsed)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div ref={scrollRef} />
+          </div>
+        </ScrollArea>
+
+        {/* Input Area */}
+        <div className="p-4 bg-background/80 backdrop-blur-xl border-t border-border/50">
+          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto relative flex gap-2">
+            <Button 
+              type="button"
+              variant="outline" 
+              size="icon" 
+              className={`h-12 w-12 rounded-xl shrink-0 ${isRecording ? 'text-red-500 border-red-500 animate-pulse' : ''}`}
+            >
+              <Mic className="w-5 h-5" />
+            </Button>
+            <div className="relative flex-1">
+              <Input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="Ask about markets, loans, or specific stocks..."
+                className="h-12 rounded-xl pr-12 bg-secondary/30 ring-offset-background border-border/50 text-base"
+                disabled={isLoading}
+              />
+              <Button 
+                type="submit" 
+                size="icon" 
+                className="absolute right-1 top-1 h-10 w-10 rounded-lg hover:bg-primary shadow-sm"
+                disabled={isLoading || !input.trim()}
+              >
+                <Send className="w-4 h-4" />
+              </Button>
+            </div>
+          </form>
+          <div className="text-center mt-2 text-[10px] text-muted-foreground w-full">
+            The ET AI Concierge can make mistakes. Please verify important financial information.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
