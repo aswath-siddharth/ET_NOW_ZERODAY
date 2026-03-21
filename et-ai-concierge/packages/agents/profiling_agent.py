@@ -300,36 +300,47 @@ def run_profiling_agent(user_message: str, profile: UserProfile) -> AgentRespons
 
 XRAY_SYSTEM_PROMPT = """You are the ET AI Concierge's Financial X-Ray module — a warm, conversational financial profiler for The Economic Times ecosystem.
 
-Your job is to conduct a 5-question onboarding interview to understand a new user's financial profile. You must ask exactly 5 questions, one at a time, adapting each follow-up based on the user's previous answers.
+Your job is to conduct a 9-question onboarding interview to understand a new user's financial profile. You must ask exactly 9 questions, one at a time, adapting each follow-up based on the user's previous answers.
 
 ## Topics to Cover (in this order):
 1. **Income type**: Are they salaried, self-employed, or a business owner?
 2. **Age group**: Which decade of life are they in (20s, 30s, 40s, 50+)?
-3. **Risk tolerance**: How comfortable are they with short-term losses for long-term growth? (scale 1-10)
-4. **Investment interests**: Which sectors or asset classes interest them most?
-5. **Primary financial goal**: What's their #1 focus — saving, growing wealth, protecting assets, or buying something big?
+3. **Emergency fund**: Do they have 3-6 months of expenses saved?
+4. **Home ownership**: Are they renting or do they own their home?
+5. **Risk tolerance**: How comfortable are they with short-term losses for long-term growth? (scale 1-10)
+6. **Investment interests**: Which sectors or asset classes interest them most?
+7. **Investment horizon**: Are they thinking short-term (1-3 years) or long-term (10+ years)?
+8. **Trading style**: Are they an active trader or a long-term SIP investor?
+9. **Primary financial goal**: What's their #1 focus — saving, growing wealth, protecting assets, or buying something big?
 
 ## Rules:
 - Ask ONE question at a time. Never ask more than one.
+- STOP generating immediately after asking your question. Do NOT simulate, guess, or assume the user's answer.
+- Do NOT output internal notes, parentheses, or thoughts like "(Assuming the user answers...)".
 - Be conversational, warm, and brief. Use natural language, not robotic phrasing.
 - Dynamically adapt your question wording based on previous answers. For example, if they say they're in their 20s and salaried, you might frame the risk tolerance question as "Since you're early in your career, you have time on your side. How comfortable are you with short-term dips in your portfolio?"
 - Never repeat a question the user has already answered.
 - Keep each question under 2 sentences.
 - Do NOT give financial advice during the interview.
+- If a user says "Other" or provides a free-text answer, accept it and use that context when adapting later questions and the final persona.
 
-## When all 5 questions are answered:
-After the user answers the 5th question, respond with a brief, encouraging summary message followed by a JSON block in this exact format:
+## When all 9 questions are answered:
+After the user answers the 9th question, respond with a brief, encouraging 1-sentence summary message. Do NOT add any transition phrases like "Here is your profile", "Here is a summary", or mention the words "JSON" or "format". Immediately after your 1-sentence summary, provide the JSON block with absolutely NO text between your sentence and the JSON:
 
 ```json
-{"xray_complete": true, "profile": {"income_type": "...", "age_group": "...", "risk_score": N, "interests": ["..."], "primary_goal": "...", "persona": "..."}}
+{"xray_complete": true, "profile": {"income_type": "...", "age_group": "...", "has_emergency_fund": true/false, "home_ownership": "...", "risk_score": N, "interests": ["..."], "investment_horizon": "...", "is_active_trader": "...", "primary_goal": "...", "persona": "..."}}
 ```
 
 The JSON block MUST be the last thing in your response. Values should be extracted/normalized from the user's answers:
-- income_type: one of "salaried", "self-employed", "business owner"
+- income_type: one of "salaried", "self-employed", "business owner" (or the user's custom answer if they said 'Other')
 - age_group: one of "20s", "30s", "40s", "50+"
+- has_emergency_fund: boolean
+- home_ownership: one of "renting", "owning" (or the user's custom answer)
 - risk_score: integer 1-10
 - interests: array of sectors like ["Tech", "Pharma", "Banking", "Infrastructure", "Auto", "Real Estate", "FMCG", "Gold", "Crypto"]
-- primary_goal: one of "saving", "growing", "protecting", "buying"
+- investment_horizon: one of "1-3 years", "3-5 years", "5-10 years", "10+ years"
+- is_active_trader: one of "active trader", "SIP investor", "both"
+- primary_goal: one of "saving", "growing", "protecting", "buying" (or the user's custom answer)
 - persona: Analyze their answers holistically and use your judgment as an expert financial advisor to assign EXACTLY ONE of the following personas. Do not rely on simplistic rules; look at the entire picture of their risk, age, income, and goals:
    - "PERSONA_HOME_BUYER": Primary focus is saving/planning for a home or real estate.
    - "PERSONA_ACTIVE_TRADER": Very high risk tolerance, actively pursuing aggressive market growth.
@@ -342,14 +353,18 @@ XRAY_WARM_OPEN = (
     "Welcome to ET! 👋 I'm your personal Financial Navigator. "
     "Before I connect you to the right parts of our ecosystem, "
     "I'd love to understand your financial world through a quick **Financial X-Ray**. "
-    "Just 5 quick questions — takes about 2 minutes.\n\n"
+    "Just 9 quick questions — takes about 3 minutes.\n\n"
 )
 
 XRAY_FALLBACK_QUESTIONS = [
     "Let's start simple — are you currently **salaried**, **self-employed**, or a **business owner**?",
     "Which age bracket are you in — **20s**, **30s**, **40s**, or **50+**?",
+    "Do you have **3–6 months** of expenses saved as an **emergency fund**?",
+    "Are you currently **renting**, or do you **own your home**?",
     "On a scale of **1 to 10**, how comfortable are you with short-term portfolio losses in exchange for long-term growth?",
     "Which sectors interest you the most? For example — **Tech, Pharma, Infrastructure, Banking, Real Estate**?",
+    "Are you primarily thinking about the next **1–3 years**, or are you building wealth for **10+ years**?",
+    "Do you **actively trade** stocks, or are you more of a long-term **SIP investor**?",
     "What's the one financial goal you're most focused on right now — **saving**, **growing wealth**, **protecting assets**, or **buying something big**?",
 ]
 
@@ -364,7 +379,7 @@ def run_xray_step(
 
     Args:
         conversation_history: List of {"role": str, "content": str} dicts
-        question_number: 0-indexed, which question we're on (0-4)
+        question_number: 0-indexed, which question we're on (0-8 is asking, 9 is summary)
 
     Returns:
         The next question or the final summary with JSON profile
@@ -372,7 +387,14 @@ def run_xray_step(
     from config import settings
 
     # Build messages for the LLM
-    messages = [{"role": "system", "content": XRAY_SYSTEM_PROMPT}]
+    sys_prompt = XRAY_SYSTEM_PROMPT
+    
+    if question_number < 9:
+        sys_prompt += f"\n\nCRITICAL INSTRUCTION: You are currently on question #{question_number + 1} of 9. You MUST ONLY ask this next question. DO NOT output the final onboarding summary, and DO NOT output the JSON block yet."
+    else:
+        sys_prompt += "\n\nCRITICAL INSTRUCTION: The user has answered all 9 questions. DO NOT ask any more questions. You MUST now output your 1-sentence final summary, followed IMMEDIATELY by the JSON block format, and absolutely nothing else."
+
+    messages = [{"role": "system", "content": sys_prompt}]
     messages.extend(conversation_history)
 
     # Try Groq first
@@ -410,16 +432,29 @@ def run_xray_step(
     if question_number < len(XRAY_FALLBACK_QUESTIONS):
         return XRAY_FALLBACK_QUESTIONS[question_number]
 
-    # Extract answers from conversation_history
-    income = conversation_history[1]["content"] if len(conversation_history) > 1 else "salaried"
-    age = conversation_history[3]["content"] if len(conversation_history) > 3 else "30s"
-    risk_str = conversation_history[5]["content"] if len(conversation_history) > 5 else "5"
+    # Extract answers from conversation_history for fallback
+    # Conversation: [user_q0, asst_a0, user_q1, asst_a1, ...]
+    # User answers are at indices 1, 3, 5, 7, 9, 11, 13, 15, 17
+    def get_answer(idx):
+        msg_idx = 1 + idx * 2  # user answers at odd indices
+        if len(conversation_history) > msg_idx:
+            return conversation_history[msg_idx]["content"]
+        return None
+
+    income = get_answer(0) or "salaried"
+    age = get_answer(1) or "30s"
+    emergency = get_answer(2) or "no"
+    home = get_answer(3) or "renting"
+    risk_str = get_answer(4) or "5"
     try:
         risk = int(risk_str)
     except:
         risk = 5
-    interests = [conversation_history[7]["content"]] if len(conversation_history) > 7 else ["Tech"]
-    goal = conversation_history[9]["content"] if len(conversation_history) > 9 else "growing"
+    interests_raw = get_answer(5) or "Tech"
+    interests = [s.strip() for s in interests_raw.split(",")] if interests_raw else ["Tech"]
+    horizon = get_answer(6) or "3-5 years"
+    trader = get_answer(7) or "SIP investor"
+    goal = get_answer(8) or "growing"
     
     import json
     fallback_profile = {
@@ -427,13 +462,17 @@ def run_xray_step(
         "profile": {
             "income_type": income.lower(),
             "age_group": age.lower(),
+            "has_emergency_fund": emergency.lower().strip() in ("yes", "y", "true"),
+            "home_ownership": home.lower(),
             "risk_score": risk,
             "interests": interests,
+            "investment_horizon": horizon.lower(),
+            "is_active_trader": trader.lower(),
             "primary_goal": goal.lower()
         }
     }
     
-    # Fallback final response (this shouldn't normally happen)
+    # Fallback final response
     return (
         "Thanks for completing the Financial X-Ray! "
         'Based on your answers, I\'ll set up your personalized experience.\n\n'

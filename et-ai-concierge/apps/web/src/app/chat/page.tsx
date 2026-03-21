@@ -67,24 +67,81 @@ function QuickReplyChips({
   onSelect: (option: string) => void;
   disabled: boolean;
 }) {
+  const [showOtherInput, setShowOtherInput] = useState(false);
+  const [otherText, setOtherText] = useState("");
+
+  const handleOtherSubmit = () => {
+    if (otherText.trim()) {
+      onSelect(otherText.trim());
+      setShowOtherInput(false);
+      setOtherText("");
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap gap-2 mt-3 ml-12"
+      className="flex flex-col gap-2 mt-3 ml-12"
     >
-      {options.map((option) => (
-        <Button
-          key={option}
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={() => onSelect(option)}
-          className="rounded-full text-xs border-primary/30 hover:bg-primary/10 hover:border-primary/60 hover:text-primary transition-all duration-200"
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) =>
+          option === "Others" ? (
+            <Button
+              key={option}
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => setShowOtherInput(!showOtherInput)}
+              className={`rounded-full text-xs border-dashed transition-all duration-200 ${
+                showOtherInput
+                  ? "border-primary text-primary bg-primary/10"
+                  : "border-primary/30 hover:bg-primary/10 hover:border-primary/60 hover:text-primary"
+              }`}
+            >
+              {option} …
+            </Button>
+          ) : (
+            <Button
+              key={option}
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => {
+                setShowOtherInput(false);
+                onSelect(option);
+              }}
+              className="rounded-full text-xs border-primary/30 hover:bg-primary/10 hover:border-primary/60 hover:text-primary transition-all duration-200"
+            >
+              {option}
+            </Button>
+          )
+        )}
+      </div>
+      {showOtherInput && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="flex gap-2 items-center"
         >
-          {option}
-        </Button>
-      ))}
+          <Input
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleOtherSubmit()}
+            placeholder="Type your answer..."
+            className="h-9 rounded-lg text-sm bg-secondary/30 border-border/50 flex-1"
+            autoFocus
+          />
+          <Button
+            size="sm"
+            onClick={handleOtherSubmit}
+            disabled={!otherText.trim()}
+            className="h-9 rounded-lg px-4 text-xs"
+          >
+            Send
+          </Button>
+        </motion.div>
+      )}
     </motion.div>
   );
 }
@@ -143,11 +200,15 @@ function OnboardingCompleteCard({
 
 // ─── X-Ray Question Detection ────────────────────────────────────────────────
 const XRAY_QUICK_REPLIES: Record<number, string[]> = {
-  0: ["Salaried", "Self-employed", "Business owner"],
+  0: ["Salaried", "Self-employed", "Business owner", "Others"],
   1: ["20s", "30s", "40s", "50+"],
-  2: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-  3: ["Tech", "Pharma", "Banking", "Infrastructure", "Real Estate", "FMCG"],
-  4: ["Saving", "Growing wealth", "Protecting assets", "Buying something big"],
+  2: ["Yes", "No", "Working on it"],
+  3: ["Renting", "Owning", "Others"],
+  4: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+  5: ["Tech", "Pharma", "Banking", "Infrastructure", "Real Estate", "FMCG", "Gold", "Crypto", "Others"],
+  6: ["1-3 years", "3-5 years", "5-10 years", "10+ years"],
+  7: ["Active trader", "SIP investor", "Both", "Others"],
+  8: ["Saving", "Growing wealth", "Protecting assets", "Buying something big", "Others"],
 };
 
 // ─── Main Chat Page ──────────────────────────────────────────────────────────
@@ -471,7 +532,7 @@ export default function ChatPage() {
             {xrayState === "active" && (
               <span className="flex items-center gap-1.5 text-primary font-medium">
                 <Sparkles className="w-3.5 h-3.5" />
-                Financial X-Ray — Q{Math.min(xrayStep + 1, 5)} of 5
+                Financial X-Ray — Q{Math.min(xrayStep + 1, 9)} of 9
               </span>
             )}
             <span className="flex items-center gap-1.5">
