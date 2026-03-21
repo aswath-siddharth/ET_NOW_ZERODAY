@@ -20,27 +20,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const response = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+    const response = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
     });
 
-    if (!response.body) {
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Backend returned ${response.status}: ${errorText}`);
       return NextResponse.json(
-        { error: "No response from backend" },
-        { status: 502 }
+        { error: "Failed response from backend", details: errorText },
+        { status: response.status }
       );
     }
 
-    // Stream SSE through
-    return new Response(response.body, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    const data = await response.json();
+    return NextResponse.json(data);
   } catch (error) {
     console.error("Chat proxy error:", error);
     return NextResponse.json(

@@ -1,14 +1,39 @@
 """
 ET AI Concierge — Editorial Agent (Agent 2)
-Surfaces ET Prime / ET Wealth content using the local RAG pipeline.
+Surfaces ET Prime / ET Wealth content using the RAG pipeline.
+Falls back to mock articles if RAG is not available.
 """
 from typing import List, Dict, Any, Optional
 from state import AgentResponse, UserProfile, Recommendation, PersonaType
 from config import settings
 
 
-# ─── Mock ET Prime Article Database ───────────────────────────────────────────
-# In production, this is replaced by the full RAG pipeline (Qdrant + Elastic + Neo4j)
+# ─── RAG Integration ──────────────────────────────────────────────────────────
+
+def _rag_available() -> bool:
+    """Check if the RAG engine is operational."""
+    try:
+        from rag_engine import retrieve
+        # Quick check — does the knowledge_base table have data?
+        results = retrieve("test", top_k=1)
+        return len(results) > 0
+    except Exception:
+        return False
+
+
+def _search_with_rag(query: str, persona: Optional[str] = None) -> Dict[str, Any]:
+    """Use the RAG engine for retrieval + generation."""
+    try:
+        from rag_engine import ask
+        result = ask(query, persona=persona, top_k=3)
+        return result
+    except Exception as e:
+        print(f"⚠️ RAG search failed: {e}")
+        return None
+
+
+# ─── Fallback: Mock ET Prime Article Database ────────────────────────────────
+# Used when RAG is not available (no pgvector, no embeddings, etc.)
 
 MOCK_ARTICLES = [
     {
@@ -56,75 +81,25 @@ MOCK_ARTICLES = [
         "tags": ["ELSS", "80C", "tax saving", "mutual funds"],
         "paywall": False
     },
-    {
-        "id": "art_006",
-        "title": "Young Mind Entrepreneurs: 5 Startup Founders Under 25",
-        "sector": "Startups",
-        "summary": "Profiles of India's youngest startup founders, their funding journeys, and lessons for aspiring entrepreneurs.",
-        "url": "https://economictimes.indiatimes.com/startups/young-mind-founders",
-        "tags": ["startups", "young mind", "entrepreneurs", "founders"],
-        "paywall": True
-    },
-    {
-        "id": "art_007",
-        "title": "Portfolio Rebalancing Strategy: When to Shift from Equity to Debt",
-        "sector": "Markets",
-        "summary": "Expert guide on portfolio rebalancing. Includes age-based allocation models and tax-efficient switching strategies.",
-        "url": "https://economictimes.indiatimes.com/markets/portfolio-rebalancing",
-        "tags": ["portfolio", "rebalancing", "equity", "debt", "allocation"],
-        "paywall": True
-    },
-    {
-        "id": "art_008",
-        "title": "NPS vs PPF: Which Retirement Plan Wins in 2025?",
-        "sector": "Personal Finance",
-        "summary": "NPS offers higher returns but with market risk. PPF guarantees 7.1%. We break down which suits your risk profile.",
-        "url": "https://economictimes.indiatimes.com/wealth/plan/nps-vs-ppf",
-        "tags": ["NPS", "PPF", "retirement", "pension", "saving"],
-        "paywall": False
-    },
-    {
-        "id": "art_009",
-        "title": "Auto Sector Rally: Tata Motors, M&M Lead the Charge",
-        "sector": "Auto",
-        "summary": "Auto stocks have surged 25% YTD driven by EV demand and export growth. Should you buy, hold, or sell?",
-        "url": "https://economictimes.indiatimes.com/markets/auto-rally",
-        "tags": ["auto", "Tata Motors", "M&M", "EV", "stocks"],
-        "paywall": True
-    },
-    {
-        "id": "art_010",
-        "title": "Health Insurance: Why You Need ₹10 Lakh Cover Minimum in 2025",
-        "sector": "Personal Finance",
-        "summary": "Medical inflation at 14% means your ₹5 lakh cover is woefully inadequate. Niva Bupa and Star Health compared.",
-        "url": "https://economictimes.indiatimes.com/wealth/insure/health-insurance-2025",
-        "tags": ["insurance", "health", "Niva Bupa", "Star Health", "cover"],
-        "paywall": False
-    },
 ]
 
 
 def _search_articles(query: str, user_interests: List[str] = None) -> List[Dict]:
-    """Simple keyword-based search over mock articles. Replaced by RAG pipeline in production."""
+    """Simple keyword-based search over mock articles (fallback)."""
     query_lower = query.lower()
     results = []
 
     for article in MOCK_ARTICLES:
         score = 0
-        # Check title match
         if any(word in article["title"].lower() for word in query_lower.split()):
             score += 3
-        # Check tag match
         if any(tag in query_lower for tag in article["tags"]):
             score += 5
-        # Check summary match
         if any(word in article["summary"].lower() for word in query_lower.split()):
             score += 1
-        # Boost if matches user interests
         if user_interests:
             if article["sector"] in user_interests:
                 score += 2
-
         if score > 0:
             results.append({**article, "_score": score})
 
@@ -164,7 +139,7 @@ def _route_by_persona(query: str, persona: Optional[PersonaType]) -> str:
         else:
             return "gold investment options SGB"
 
-    return query  # Unchanged for other queries
+    return query
 
 
 # ─── Main Agent Function ─────────────────────────────────────────────────────
@@ -172,15 +147,54 @@ def _route_by_persona(query: str, persona: Optional[PersonaType]) -> str:
 def run_editorial_agent(user_message: str, profile: UserProfile) -> AgentResponse:
     """
     Process a message through the Editorial Agent.
-    Searches ET Prime corpus and returns personalized content.
+    Uses RAG pipeline if available, falls back to mock articles.
     """
-    # Route query based on persona
+    if profile.persona:
+        persona_str = profile.persona.value if hasattr(profile.persona, 'value') else str(profile.persona)
+    else:
+        persona_str = None
+
+    # ═══ Try RAG Pipeline First ═══
+    rag_result = _search_with_rag(user_message, persona=persona_str)
+
+    if rag_result and rag_result.get("chunks_used", 0) > 0:
+        # RAG succeeded — build response from RAG output
+        content = rag_result["answer"]
+
+        # Add source links
+        sources = rag_result.get("sources", [])
+        source_urls = [s["url"] for s in sources if s.get("url")]
+
+        has_paywall = any(s.get("paywall", False) for s in sources)
+        if has_paywall and not profile.has_et_prime_subscription:
+            content += (
+                "\n\n💎 *Some of this content is from ET Prime exclusives. "
+                "Get full access for ₹199/month at [ET Prime](https://buy.indiatimes.com/ET/plans).*"
+            )
+
+        recommendations = [
+            Recommendation(
+                type="article",
+                title=s["title"],
+                description="",
+                deeplink=s.get("url", ""),
+                source_agent="editorial_agent",
+            )
+            for s in sources
+        ]
+
+        return AgentResponse(
+            agent_id="editorial_agent",
+            content=content,
+            type="rag_response",
+            contains_investment_advice="invest" in user_message.lower() or "buy" in user_message.lower(),
+            recommendations=recommendations,
+            sources=source_urls,
+        )
+
+    # ═══ Fallback: Mock Articles ═══
     search_query = _route_by_persona(user_message, profile.persona)
-
-    # Search articles
     articles = _search_articles(search_query, profile.interests)
-
-    # Apply paywall check
     articles = _apply_paywall_check(articles, profile.has_et_prime_subscription)
 
     if not articles:
@@ -191,9 +205,7 @@ def run_editorial_agent(user_message: str, profile: UserProfile) -> AgentRespons
             sources=[],
         )
 
-    # Build response
     content_parts = [f"📰 **Here's what I found from ET Prime for you:**\n"]
-
     recommendations = []
     sources = []
     has_paywall = False

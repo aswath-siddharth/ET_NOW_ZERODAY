@@ -386,53 +386,28 @@ export default function ChatPage() {
     ]);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+      const response = await fetch(`${BACKEND_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user_id: userId,
+          session_id: sessionId,
           message: userMsg,
           modality: "web",
         }),
       });
 
-      if (!response.body) throw new Error("No body");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.token) {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === asstMsgId
-                      ? { ...m, content: m.content + data.token }
-                      : m
-                  )
-                );
-              }
-              if (data.done) {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === asstMsgId
-                      ? { ...m, agentUsed: data.agent_used }
-                      : m
-                  )
-                );
-              }
-            } catch (err) {}
-          }
-        }
-      }
+      if (!response.ok) throw new Error("API Error");
+      
+      const data = await response.json();
+      
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === asstMsgId
+            ? { ...m, content: data.message, agentUsed: data.agent_used }
+            : m
+        )
+      );
     } catch (error) {
       console.error(error);
       setMessages((prev) => [

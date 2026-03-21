@@ -49,8 +49,9 @@ class Settings:
     # ── Voice ────────────────────────────────────
     EDGE_TTS_VOICE: str = "en-IN-NeerjaNeural"
 
-    # ── Embedding Model ──────────────────────────
-    EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
+    # ── Embedding Model ──────────────────────────────────────
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_DIM: int = 384
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
 
 

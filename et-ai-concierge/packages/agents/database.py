@@ -86,6 +86,25 @@ CREATE TABLE IF NOT EXISTS chat_history (
 
 CREATE INDEX IF NOT EXISTS idx_chat_user_session ON chat_history(user_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_history(created_at);
+
+-- pgvector extension for RAG
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    article_id      VARCHAR(50) NOT NULL,
+    title           TEXT NOT NULL,
+    category        VARCHAR(100),
+    chunk_text      TEXT NOT NULL,
+    chunk_index     INTEGER NOT NULL,
+    embedding       vector(384),
+    source_url      TEXT,
+    tags            JSONB DEFAULT '[]'::jsonb,
+    paywall         BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category);
 """
 
 

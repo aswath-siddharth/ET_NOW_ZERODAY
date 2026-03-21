@@ -16,3 +16,5 @@ pydantic
 python-dotenv
 python-jose[cryptography]
 passlib[bcrypt]
+sentence-transformers
+pgvector
