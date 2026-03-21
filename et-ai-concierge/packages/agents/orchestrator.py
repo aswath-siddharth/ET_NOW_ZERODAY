@@ -10,9 +10,11 @@ import datetime
 from typing import Optional, Dict, Any, AsyncGenerator
 from pydantic import BaseModel as PydanticBaseModel
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+
+from auth import AuthUser, get_current_user, get_optional_user
 
 from state import (
     ConciergeState, UserProfile, Message, ChatRequest, ChatResponse,
@@ -248,9 +250,9 @@ def health_check():
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, auth_user: AuthUser = Depends(get_current_user)):
     """Main chat endpoint. Routes to the appropriate agent."""
-    user_id = request.user_id or "default_user"
+    user_id = auth_user.user_id
     session_id = request.session_id or str(uuid.uuid4())
     profile = _get_profile(user_id)
 
@@ -315,7 +317,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, auth_user: AuthUser = Depends(get_current_user)):
     """SSE streaming endpoint for the chat UI."""
     async def generate() -> AsyncGenerator[str, None]:
         # Get the full response first
@@ -331,8 +333,9 @@ async def chat_stream(request: ChatRequest):
 
 
 @app.get("/api/session/resume")
-async def resume_session(user_id: str, modality: str = "web"):
+async def resume_session(modality: str = "web", auth_user: AuthUser = Depends(get_current_user)):
     """Resume a session from another modality (voice → web handoff)."""
+    user_id = auth_user.user_id
     session = _get_session(user_id)
 
     if session:
@@ -367,14 +370,15 @@ async def resume_session(user_id: str, modality: str = "web"):
 # ─── Onboarding Endpoints ────────────────────────────────────────────────────
 
 @app.get("/api/onboarding/start")
-async def start_onboarding(user_id: str = "default_user"):
+async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
     """Start the onboarding flow."""
+    user_id = auth_user.user_id
     _onboarding_state[user_id] = {"step": 0, "answers": {}}
     return get_onboarding_step(0).model_dump()
 
 
 @app.post("/api/onboarding/answer")
-async def answer_onboarding(request: OnboardingRequest):
+async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = Depends(get_current_user)):
     """Submit an onboarding answer."""
     user_id = request.user_id
     state = _onboarding_state.get(user_id, {"step": 0, "answers": {}})
@@ -427,9 +431,9 @@ class XRayRequest(PydanticBaseModel):
 
 
 @app.post("/api/chat/xray")
-async def chat_xray(request: XRayRequest):
+async def chat_xray(request: XRayRequest, auth_user: AuthUser = Depends(get_current_user)):
     """Financial X-Ray endpoint — LLM-driven 5-question onboarding via chat."""
-    user_id = request.user_id
+    user_id = auth_user.user_id
     session_id = request.session_id or str(uuid.uuid4())
     profile = _get_profile(user_id)
 
@@ -530,8 +534,9 @@ async def chat_xray(request: XRayRequest):
 
 
 @app.get("/api/chat/history")
-async def chat_history(user_id: str, session_id: Optional[str] = None, limit: int = 50):
+async def chat_history(session_id: Optional[str] = None, limit: int = 50, auth_user: AuthUser = Depends(get_current_user)):
     """Retrieve chat history for a user."""
+    user_id = auth_user.user_id
     messages = get_chat_history(user_id, session_id, limit)
     # Serialize datetime objects
     for m in messages:
@@ -546,8 +551,9 @@ async def chat_history(user_id: str, session_id: Optional[str] = None, limit: in
 # ─── Behavioral Tracking Endpoints ───────────────────────────────────────────
 
 @app.post("/api/track/paywall")
-async def track_paywall(user_id: str = "default_user"):
+async def track_paywall(auth_user: AuthUser = Depends(get_current_user)):
     """Track a paywall hit."""
+    user_id = auth_user.user_id
     track_paywall_hit(user_id)
     behavioral = run_behavioral_monitor(user_id, "")
     if behavioral:
@@ -555,11 +561,50 @@ async def track_paywall(user_id: str = "default_user"):
     return {"triggered": False}
 
 
-@app.get("/api/profile/{user_id}")
-async def get_profile(user_id: str):
+@app.get("/api/profile")
+async def get_profile(auth_user: AuthUser = Depends(get_current_user)):
     """Get user profile."""
-    profile = _get_profile(user_id)
+    profile = _get_profile(auth_user.user_id)
     return profile.model_dump()
+
+
+# ─── Public Auth Endpoints ───────────────────────────────────────────────────
+
+class RegisterRequest(PydanticBaseModel):
+    email: str
+    name: Optional[str] = None
+    password: Optional[str] = None
+    provider: str = "credentials"
+
+
+class VerifyRequest(PydanticBaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/register")
+async def register_user(request: RegisterRequest):
+    """Register a new user. Called by NextAuth on first sign-in."""
+    from database import create_or_get_user
+    user = create_or_get_user(
+        email=request.email,
+        name=request.name,
+        password=request.password,
+        provider=request.provider,
+    )
+    if user:
+        return {"id": str(user["id"]), "email": user.get("email"), "name": user.get("name")}
+    raise HTTPException(status_code=400, detail="Could not create user")
+
+
+@app.post("/api/auth/verify")
+async def verify_credentials(request: VerifyRequest):
+    """Verify email/password for NextAuth Credentials provider."""
+    from database import verify_user_credentials
+    user = verify_user_credentials(request.email, request.password)
+    if user:
+        return {"id": str(user["id"]), "email": user.get("email"), "name": user.get("name")}
+    raise HTTPException(status_code=401, detail="Invalid email or password")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

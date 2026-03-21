@@ -13,6 +13,9 @@ class Settings:
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
+    # ── Auth ────────────────────────────────────
+    AUTH_SECRET: str = os.getenv("AUTH_SECRET", "")
+
     # ── Redis (Local) ────────────────────────────
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 

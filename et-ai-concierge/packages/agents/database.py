@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    email           VARCHAR(255) UNIQUE,
+    name            VARCHAR(255),
+    image           TEXT,
+    auth_provider   VARCHAR(50) DEFAULT 'credentials',
+    password_hash   TEXT,
     persona         VARCHAR(50),
     risk_score      INTEGER,
     interests       JSONB DEFAULT '[]'::jsonb,
@@ -39,6 +44,16 @@ CREATE TABLE IF NOT EXISTS users (
     has_et_prime    BOOLEAN DEFAULT FALSE,
     profile_completeness FLOAT DEFAULT 0.0
 );
+
+-- Migration: add auth columns if they don't exist (safe to re-run)
+DO $$ BEGIN
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS image TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'credentials';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ai_audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -95,6 +110,15 @@ def init_db():
         print(f"⚠️ Database init skipped (not available): {e}")
 
 
+# ─── Password Hashing ─────────────────────────────────────────────────────────
+
+try:
+    import bcrypt
+    pwd_context_available = True
+except ImportError:
+    pwd_context_available = False
+
+
 # ─── User CRUD ────────────────────────────────────────────────────────────────
 
 def create_user(user_id: Optional[str] = None) -> str:
@@ -113,6 +137,71 @@ def create_user(user_id: Optional[str] = None) -> str:
     except Exception:
         pass
     return str(uid)
+
+
+def create_or_get_user(
+    email: str,
+    name: Optional[str] = None,
+    password: Optional[str] = None,
+    provider: str = "credentials",
+    image: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Create a new user by email or return existing one. Used by auth flow."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Check if user exists
+        cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+        existing = cur.fetchone()
+        if existing:
+            cur.close()
+            conn.close()
+            return dict(existing)
+        
+        # Hash password if provided
+        hashed_pw = None
+        if password and pwd_context_available:
+            pwd_bytes = password.encode('utf-8')
+            salt = bcrypt.gensalt()
+            hashed_pw = bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+        
+        uid = uuid.uuid4()
+        cur.execute(
+            """INSERT INTO users (id, email, name, image, auth_provider, password_hash)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+            (uid, email, name, image, provider, hashed_pw),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"⚠️ Could not create_or_get_user: {e}")
+        return None
+
+
+def verify_user_credentials(email: str, password: str) -> Optional[Dict[str, Any]]:
+    """Verify email + password for login. Returns user dict or None."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if row and row.get("password_hash") and pwd_context_available:
+            try:
+                if bcrypt.checkpw(password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+                    return dict(row)
+            except ValueError:
+                pass
+        return None
+    except Exception as e:
+        print(f"⚠️ Could not verify credentials: {e}")
+        return None
 
 
 def update_user_profile(user_id: str, profile_data: Dict[str, Any]):

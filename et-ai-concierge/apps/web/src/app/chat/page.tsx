@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import { Mic, Send, Bot, User, ShieldAlert, BadgeInfo, Sparkles, CheckCircle2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -158,7 +159,8 @@ export default function ChatPage() {
   const [xrayState, setXrayState] = useState<XRayState>("idle");
   const [xrayStep, setXrayStep] = useState(0);
   const [sessionId, setSessionId] = useState<string>("");
-  const [userId] = useState(() => `test_user_${Math.random().toString(36).substr(2, 9)}`);
+  const { data: session } = useSession();
+  const [userId] = useState(() => session?.user?.id || `anon_${Math.random().toString(36).substr(2, 9)}`);
   const [xrayPersona, setXrayPersona] = useState<string>("");
   const [xrayTools, setXrayTools] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
