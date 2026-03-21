@@ -8,6 +8,7 @@ import uuid
 import asyncio
 import datetime
 from typing import Optional, Dict, Any, AsyncGenerator
+from pydantic import BaseModel as PydanticBaseModel
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,12 +24,17 @@ from compliance_wrapper import compliance_wrapper
 from profiling_agent import (
     run_profiling_agent, get_onboarding_step, process_onboarding_answer,
     complete_profiling, PROFILING_QUESTIONS, calculate_profile_completeness,
+    run_xray_step, extract_xray_profile, map_xray_to_persona,
+    XRAY_WARM_OPEN, XRAY_FALLBACK_QUESTIONS, PERSONA_MAPPING,
 )
 from editorial_agent import run_editorial_agent
 from market_intelligence_agent import run_market_intelligence_agent
 from marketplace_agent import run_marketplace_agent
 from behavioral_monitor import run_behavioral_monitor, track_paywall_hit, track_query
-from database import init_db, create_user, update_user_profile, get_user, log_audit
+from database import (
+    init_db, create_user, update_user_profile, get_user, log_audit,
+    save_chat_message, get_chat_history,
+)
 
 # ─── Optional: Groq LLM ──────────────────────────────────────────────────────
 try:
@@ -295,6 +301,10 @@ async def chat(request: ChatRequest):
     session.conversation_history.append(Message(role="assistant", content=final_content, agent_id=agent_name))
     _save_session(user_id, session)
 
+    # Persist to chat_history DB
+    save_chat_message(user_id, session_id, "user", request.message)
+    save_chat_message(user_id, session_id, "assistant", final_content, agent_id=agent_name)
+
     return ChatResponse(
         message=final_content,
         session_id=session_id,
@@ -404,6 +414,135 @@ async def answer_onboarding(request: OnboardingRequest):
     return get_onboarding_step(next_step).model_dump()
 
 
+# ─── Financial X-Ray Endpoints ────────────────────────────────────────────────
+
+_xray_conversations: Dict[str, list] = {}  # user_id -> conversation history
+_xray_question_count: Dict[str, int] = {}  # user_id -> question number
+
+
+class XRayRequest(PydanticBaseModel):
+    user_id: str = "default_user"
+    message: str
+    session_id: Optional[str] = None
+
+
+@app.post("/api/chat/xray")
+async def chat_xray(request: XRayRequest):
+    """Financial X-Ray endpoint — LLM-driven 5-question onboarding via chat."""
+    user_id = request.user_id
+    session_id = request.session_id or str(uuid.uuid4())
+    profile = _get_profile(user_id)
+
+    # If already onboarded, return profile summary
+    if profile.onboarding_complete:
+        persona = profile.persona
+        mapping = PERSONA_MAPPING.get(persona, {})
+        tools = mapping.get("primary_tools", [])
+        return {
+            "message": f"Your Financial X-Ray is already complete! You're mapped as a **{persona.value if hasattr(persona, 'value') else persona}**. Your recommended tools: {', '.join(tools)}.",
+            "is_complete": True,
+            "persona": persona.value if hasattr(persona, 'value') else persona,
+            "session_id": session_id,
+        }
+
+    # Initialize conversation if new
+    if user_id not in _xray_conversations:
+        _xray_conversations[user_id] = []
+        _xray_question_count[user_id] = 0
+
+    conv = _xray_conversations[user_id]
+    q_num = _xray_question_count[user_id]
+
+    # First call — generate warm open + first question
+    if not conv and not request.message:
+        first_q = run_xray_step([], 0)
+        greeting = XRAY_WARM_OPEN + first_q
+        conv.append({"role": "assistant", "content": greeting})
+        _xray_conversations[user_id] = conv
+
+        save_chat_message(user_id, session_id, "assistant", greeting, agent_id="profiling_agent")
+
+        return {
+            "message": greeting,
+            "is_complete": False,
+            "question_number": 0,
+            "session_id": session_id,
+        }
+
+    # User answered — add to conversation
+    conv.append({"role": "user", "content": request.message})
+    q_num += 1
+    _xray_question_count[user_id] = q_num
+
+    save_chat_message(user_id, session_id, "user", request.message)
+
+    # Generate next question via LLM
+    next_response = run_xray_step(conv, q_num)
+    conv.append({"role": "assistant", "content": next_response})
+    _xray_conversations[user_id] = conv
+
+    save_chat_message(user_id, session_id, "assistant", next_response, agent_id="profiling_agent")
+
+    # Check if the X-Ray is complete (LLM includes JSON block)
+    extracted = extract_xray_profile(next_response)
+    if extracted:
+        persona_str = map_xray_to_persona(extracted)
+        mapping = PERSONA_MAPPING.get(persona_str, {})
+        tools = []
+        for k, v in PERSONA_MAPPING.items():
+            key_val = k.value if hasattr(k, 'value') else k
+            if key_val == persona_str:
+                tools = v.get("primary_tools", [])
+                break
+
+        # Update profile
+        profile.persona = persona_str
+        profile.onboarding_complete = True
+        profile.risk_score = extracted.get("risk_score", 5)
+        profile.interests = extracted.get("interests", [])
+        profile.primary_goal = extracted.get("primary_goal")
+        profile.income_type = extracted.get("income_type")
+        profile.age_group = extracted.get("age_group")
+        profile.profile_completeness = 1.0
+        _profiles[user_id] = profile
+
+        # Save to DB
+        update_user_profile(user_id, profile.model_dump())
+
+        # Cleanup
+        del _xray_conversations[user_id]
+        del _xray_question_count[user_id]
+
+        return {
+            "message": next_response,
+            "is_complete": True,
+            "persona": persona_str,
+            "recommended_tools": tools,
+            "session_id": session_id,
+        }
+
+    return {
+        "message": next_response,
+        "is_complete": False,
+        "question_number": q_num,
+        "session_id": session_id,
+    }
+
+
+@app.get("/api/chat/history")
+async def chat_history(user_id: str, session_id: Optional[str] = None, limit: int = 50):
+    """Retrieve chat history for a user."""
+    messages = get_chat_history(user_id, session_id, limit)
+    # Serialize datetime objects
+    for m in messages:
+        for k, v in m.items():
+            if hasattr(v, 'isoformat'):
+                m[k] = v.isoformat()
+        if 'id' in m:
+            m['id'] = str(m['id'])
+    return {"messages": messages, "count": len(messages)}
+
+
 # ─── Behavioral Tracking Endpoints ───────────────────────────────────────────
 
 @app.post("/api/track/paywall")
@@ -427,4 +566,4 @@ async def get_profile(user_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("orchestrator:app", host="0.0.0.0", port=8000, reload=True)

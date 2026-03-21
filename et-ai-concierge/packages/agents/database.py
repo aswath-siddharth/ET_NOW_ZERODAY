@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS ai_audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON ai_audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON ai_audit_log(agent_id);
+
+CREATE TABLE IF NOT EXISTS chat_history (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         VARCHAR(255) NOT NULL,
+    session_id      VARCHAR(255) NOT NULL,
+    role            VARCHAR(20) NOT NULL,
+    content         TEXT NOT NULL,
+    agent_id        VARCHAR(50),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_user_session ON chat_history(user_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_history(created_at);
 """
 
 
@@ -196,3 +209,56 @@ def log_audit(
         conn.close()
     except Exception as e:
         print(f"⚠️ Audit log failed: {e}")
+
+
+# ─── Chat History ─────────────────────────────────────────────────────────────
+
+def save_chat_message(
+    user_id: str,
+    session_id: str,
+    role: str,
+    content: str,
+    agent_id: Optional[str] = None,
+):
+    """Persist a chat message to the chat_history table."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO chat_history (user_id, session_id, role, content, agent_id)
+            VALUES (%s, %s, %s, %s, %s)""",
+            (user_id, session_id, role, content, agent_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Could not save chat message: {e}")
+
+
+def get_chat_history(
+    user_id: str,
+    session_id: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Retrieve chat messages for a user, optionally filtered by session."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if session_id:
+            cur.execute(
+                "SELECT * FROM chat_history WHERE user_id = %s AND session_id = %s ORDER BY created_at ASC LIMIT %s",
+                (user_id, session_id, limit),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM chat_history WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
+                (user_id, limit),
+            )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"⚠️ Could not retrieve chat history: {e}")
+        return []

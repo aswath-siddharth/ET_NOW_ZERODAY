@@ -39,3 +39,16 @@ CREATE TABLE IF NOT EXISTS ai_audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON ai_audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON ai_audit_log(agent_id);
+
+CREATE TABLE IF NOT EXISTS chat_history (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         VARCHAR(255) NOT NULL,
+    session_id      VARCHAR(255) NOT NULL,
+    role            VARCHAR(20) NOT NULL,
+    content         TEXT NOT NULL,
+    agent_id        VARCHAR(50),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_user_session ON chat_history(user_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_history(created_at);
