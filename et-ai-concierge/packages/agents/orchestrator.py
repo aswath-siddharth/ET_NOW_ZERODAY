@@ -474,8 +474,8 @@ async def chat_xray(request: XRayRequest, auth_user: AuthUser = Depends(get_curr
             "session_id": session_id,
         }
 
-    # Initialize conversation if new
-    if user_id not in _xray_conversations:
+    # Force reset if user hits refresh and sends an empty initialization message
+    if not request.message:
         _xray_conversations[user_id] = []
         _xray_question_count[user_id] = 0
 

@@ -3,7 +3,7 @@ import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
 import { encode } from "next-auth/jwt";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
