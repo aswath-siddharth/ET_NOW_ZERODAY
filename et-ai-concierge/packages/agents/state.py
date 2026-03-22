@@ -61,6 +61,8 @@ class UserProfile(BaseModel):
     investment_horizon: Optional[str] = None  # short-term / long-term
     is_active_trader: Optional[bool] = None
     primary_goal: Optional[str] = None  # saving / growing / protecting / buying
+    has_tax_investments: Optional[bool] = False
+    has_insurance: Optional[bool] = False
     onboarding_complete: bool = False
     has_et_prime_subscription: bool = False
     profile_completeness: float = 0.0

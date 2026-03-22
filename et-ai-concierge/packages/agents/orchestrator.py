@@ -31,7 +31,8 @@ from profiling_agent import (
 )
 from editorial_agent import run_editorial_agent
 from market_intelligence_agent import run_market_intelligence_agent
-from marketplace_agent import run_marketplace_agent
+from marketplace_agent import run_marketplace_agent, fetch_mock_elss_funds, fetch_mock_insurance_quotes
+from intent_router import detect_upsell_intent
 from behavioral_monitor import run_behavioral_monitor, track_paywall_hit, track_query
 from database import (
     init_db, create_user, update_user_profile, get_user, log_audit,
@@ -204,7 +205,7 @@ def route_to_agent(message: str, intent: IntentType, profile: UserProfile) -> st
     return "editorial_agent"  # Default to editorial
 
 
-def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, user_message: str) -> str:
+def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, user_message: str, upsell_data: str = None) -> str:
     """Use Groq LLM to add a conversational wrapper around the agent response."""
     if not groq_client:
         return agent_response.content
@@ -217,14 +218,26 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
             tone_instruction = "The user seems frustrated. Be empathetic and direct."
         elif sentiment == SentimentType.CONFIDENT:
             tone_instruction = "The user is confident. Be precise and data-focused."
+            
+        system_content = f"{SYSTEM_PROMPT}\n\n{tone_instruction}"
+        
+        synthesis_instruction = "Now synthesize this into a conversational, helpful response. Keep the data and links intact."
+        if upsell_data:
+            synthesis_instruction += (
+                "\n\nYou have additionally detected a cross-sell opportunity based on the user's intent. "
+                "Seamlessly weave this recommendation naturally into the end of your answer. "
+                "CRITICAL: Do NOT output raw JSON, lists of dictionaries, or code formatting. Present the partner data "
+                "as a naturally written list or table within your conversational response. "
+                f"Partner Data:\n{upsell_data}"
+            )
 
         response = groq_client.chat.completions.create(
             model=settings.GROQ_MODEL,
             messages=[
-                {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{tone_instruction}"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": user_message},
                 {"role": "assistant", "content": f"Here's the data from our systems:\n{agent_response.content}"},
-                {"role": "user", "content": "Now synthesize this into a conversational, helpful response. Keep the data and links intact."},
+                {"role": "user", "content": synthesis_instruction},
             ],
             temperature=0.7,
             max_tokens=1024,
@@ -275,6 +288,18 @@ async def chat(request: ChatRequest, auth_user: AuthUser = Depends(get_current_u
     else:
         agent_response = run_editorial_agent(request.message, profile)
 
+    # Detect upsell intent (Phase 3)
+    upsell_intent = detect_upsell_intent(request.message, profile)
+    upsell_data = None
+    if upsell_intent.get("trigger_active") and upsell_intent.get("trigger_type"):
+        trigger_type = upsell_intent["trigger_type"]
+        if trigger_type == "tax_marketplace":
+            mock_data = fetch_mock_elss_funds()
+            upsell_data = f"Top ELSS Funds: {json.dumps(mock_data)}"
+        elif trigger_type == "insurance_marketplace":
+            mock_data = fetch_mock_insurance_quotes()
+            upsell_data = f"Top Insurance Quotes: {json.dumps(mock_data)}"
+
     # Check behavioral triggers
     behavioral_response = run_behavioral_monitor(user_id, request.message)
 
@@ -282,7 +307,7 @@ async def chat(request: ChatRequest, auth_user: AuthUser = Depends(get_current_u
     agent_response = compliance_wrapper.wrap(agent_response, profile, session_id, intent.value)
 
     # LLM synthesis (if available)
-    final_content = _llm_synthesize(agent_response, sentiment, request.message)
+    final_content = _llm_synthesize(agent_response, sentiment, request.message, upsell_data=upsell_data)
 
     # Append behavioral nudge if any
     if behavioral_response:
@@ -321,7 +346,7 @@ async def chat_stream(request: ChatRequest, auth_user: AuthUser = Depends(get_cu
     """SSE streaming endpoint for the chat UI."""
     async def generate() -> AsyncGenerator[str, None]:
         # Get the full response first
-        response = await chat(request)
+        response = await chat(request, auth_user=auth_user)
         # Stream it token-by-token
         words = response.message.split(" ")
         for i, word in enumerate(words):
