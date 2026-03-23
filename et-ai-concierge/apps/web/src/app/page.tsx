@@ -75,7 +75,7 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.3 }}
             className="mt-10 flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto"
           >
-            <Link href="/login" className="w-full sm:w-auto">
+            <Link href="/auth" className="w-full sm:w-auto">
               <Button size="lg" className="w-full rounded-full h-14 px-8 text-base shadow-xl shadow-primary/25 group">
                 Build My Profile
                 <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />

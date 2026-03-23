@@ -10,6 +10,10 @@ psycopg2-binary
 groq
 edge-tts
 finnhub-python
+newsapi
+feedparser
+duckduckgo-search
+yfinance
 langsmith
 sentry-sdk
 pydantic

@@ -35,6 +35,7 @@ class Settings:
 
     # ── External APIs (Free Tiers) ───────────────
     FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
+    NEWSAPI_API_KEY: str = os.getenv("NEWSAPI_API_KEY", "")
     OPENWEATHERMAP_API_KEY: str = os.getenv("OPENWEATHERMAP_API_KEY", "")
     DAILY_API_KEY: str = os.getenv("DAILY_API_KEY", "")
 

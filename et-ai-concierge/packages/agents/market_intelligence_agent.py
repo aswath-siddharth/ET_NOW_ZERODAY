@@ -12,6 +12,16 @@ try:
 except ImportError:
     finnhub = None
 
+try:
+    from newsapi import NewsApiClient
+except ImportError:
+    NewsApiClient = None
+
+try:
+    import feedparser
+except ImportError:
+    feedparser = None
+
 
 # ─── Live Data Fetchers ────────────────────────────────────────────────────────
 
@@ -45,13 +55,136 @@ def get_real_time_quote(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         return {"symbol": symbol, "error": str(e)}
 
-def finnhub_get_news(category: str = "general") -> List[Dict]:
-    """Get market news using DuckDuckGo News Search."""
+
+def _get_finnhub_news(query: str = "India stocks") -> List[Dict]:
+    """Fetch news from Finnhub API."""
+    if not settings.FINNHUB_API_KEY or not finnhub:
+        return []
+    
     try:
-        results = DDGS().news(f"India stock market {category}", max_results=5)
-        return [{"headline": n["title"], "url": n["url"]} for n in results]
+        client = finnhub.Client(api_key=settings.FINNHUB_API_KEY)
+        # Finnhub returns news for specific companies, use general search
+        news_data = client.general_news("general", min_id=0)
+        articles = []
+        for item in news_data.get("data", [])[:5]:
+            articles.append({
+                "headline": item.get("headline", ""),
+                "url": item.get("url", ""),
+                "source": "Finnhub"
+            })
+        return articles
+    except Exception as e:
+        print(f"⚠️ Finnhub API error: {e}")
+        return []
+
+
+def _get_newsapi_news(query: str = "India stocks") -> List[Dict]:
+    """Fetch news from NewsAPI."""
+    if not NewsApiClient or not settings.NEWSAPI_API_KEY:
+        return []
+    
+    try:
+        newsapi = NewsApiClient(api_key=settings.NEWSAPI_API_KEY)
+        articles_response = newsapi.get_everything(
+            q=query,
+            language="en",
+            sort_by="publishedAt",
+            page_size=5
+        )
+        articles = []
+        for item in articles_response.get("articles", []):
+            articles.append({
+                "headline": item.get("title", ""),
+                "url": item.get("url", ""),
+                "source": item.get("source", {}).get("name", "NewsAPI")
+            })
+        return articles
+    except Exception as e:
+        print(f"⚠️ NewsAPI error: {e}")
+        return []
+
+
+def _get_et_rss_news() -> List[Dict]:
+    """Fetch news from Economic Times RSS feeds."""
+    if not feedparser:
+        return []
+    
+    try:
+        feeds = {
+            "markets": "https://feeds.economictimes.indiatimes.com/markets/",
+            "wealth": "https://feeds.economictimes.indiatimes.com/wealth/",
+        }
+        
+        articles = []
+        for feed_name, feed_url in feeds.items():
+            try:
+                feed = feedparser.parse(feed_url)
+                for entry in feed.entries[:3]:
+                    articles.append({
+                        "headline": entry.get("title", ""),
+                        "url": entry.get("link", ""),
+                        "source": f"ET {feed_name.capitalize()}"
+                    })
+            except Exception:
+                continue
+        
+        return articles
+    except Exception as e:
+        print(f"⚠️ RSS feed error: {e}")
+        return []
+
+
+def _get_duckduckgo_news(query: str = "India stock market") -> List[Dict]:
+    """Fetch news from DuckDuckGo (fallback)."""
+    try:
+        results = DDGS().news(query, max_results=5)
+        return [{"headline": n["title"], "url": n["url"], "source": "DuckDuckGo"} for n in results]
     except Exception:
         return []
+
+
+def finnhub_get_news(category: str = "general") -> List[Dict]:
+    """
+    Get market news from ALL sources simultaneously.
+    Aggregates results from Finnhub, NewsAPI, ET RSS, and DuckDuckGo.
+    """
+    query_map = {
+        "stock market trading technical analysis": "stocks trading",
+        "SIP mutual funds startup investing young professional": "mutual funds SIP",
+        "corporate governance acquisitions dividend executive": "corporate governance",
+        "fixed deposits bonds insurance safety": "fixed deposits insurance",
+        "home loan real estate property mortgage": "home loans real estate",
+    }
+    
+    search_query = query_map.get(category, category)
+    
+    all_news = []
+    
+    # Fetch from ALL sources in parallel
+    finnhub_news = _get_finnhub_news(search_query)
+    all_news.extend(finnhub_news)
+    
+    newsapi_news = _get_newsapi_news(search_query)
+    all_news.extend(newsapi_news)
+    
+    et_rss_news = _get_et_rss_news()
+    all_news.extend(et_rss_news)
+    
+    ddg_news = _get_duckduckgo_news(f"India {search_query}")
+    all_news.extend(ddg_news)
+    
+    # Remove duplicates by headline
+    seen = set()
+    unique_news = []
+    for article in all_news:
+        headline = article.get("headline", "").strip().lower()
+        if headline and headline not in seen:
+            seen.add(headline)
+            unique_news.append(article)
+    
+    # Return up to 10 unique articles
+    return unique_news[:10]
+
 
 def amfi_get_nav(scheme_code: str = "119551") -> Dict[str, Any]:
     """Get mutual fund NAV via live web search."""

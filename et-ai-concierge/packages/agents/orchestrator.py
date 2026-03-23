@@ -637,6 +637,100 @@ async def get_profile(auth_user: AuthUser = Depends(get_current_user)):
     return profile.model_dump()
 
 
+@app.get("/api/dashboard/feed")
+async def get_dashboard_feed(auth_user: AuthUser = Depends(get_current_user)):
+    """Get persona-customized dashboard feed with market data, news, and insights."""
+    user_id = auth_user.user_id
+    profile = _get_profile(user_id)
+    persona = profile.persona or "PERSONA_YOUNG_PROFESSIONAL"
+    
+    # Fetch market data
+    from market_intelligence_agent import get_real_time_quote, finnhub_get_news
+    
+    nifty = get_real_time_quote("^NSEI")
+    sensex = get_real_time_quote("^BSESN")
+    
+    # Persona-specific market data
+    watchlist_symbols = {
+        "PERSONA_ACTIVE_TRADER": ["TCS.NS", "INFY.NS", "RELIANCE.NS"],
+        "PERSONA_YOUNG_PROFESSIONAL": ["HDFC.NS", "SBIN.NS", "WIPRO.NS"],
+        "PERSONA_CORPORATE_EXECUTIVE": ["MARUTI.NS", "BHARTIARTL.NS", "ASIANPAINT.NS"],
+        "PERSONA_CONSERVATIVE_SAVER": ["SBIN.NS", "SBINLIFE.NS", "BAJAJFINSV.NS"],
+        "PERSONA_HOME_BUYER": ["DLF.NS", "LODHA.NS", "SBIN.NS"],
+    }
+    
+    watchlist = []
+    for symbol in watchlist_symbols.get(persona, []):
+        quote = get_real_time_quote(symbol)
+        if "error" not in quote:
+            watchlist.append(quote)
+    
+    # Persona-specific news queries
+    news_queries = {
+        "PERSONA_ACTIVE_TRADER": "stock market trading technical analysis",
+        "PERSONA_YOUNG_PROFESSIONAL": "SIP mutual funds startup investing young professional",
+        "PERSONA_CORPORATE_EXECUTIVE": "corporate governance acquisitions dividend executive",
+        "PERSONA_CONSERVATIVE_SAVER": "fixed deposits bonds insurance safety",
+        "PERSONA_HOME_BUYER": "home loan real estate property mortgage",
+    }
+    
+    news_query = news_queries.get(persona, "India stock market")
+    
+    # Fetch personalized news
+    news = finnhub_get_news(news_query)
+    
+    # Fetch personalized insights from editorial agent
+    editorial_response = run_editorial_agent("market insights", profile)
+    editorial_content = editorial_response.content if editorial_response else "No insights available"
+    
+    # Recommended actions per persona
+    recommended_insights = {
+        "PERSONA_CONSERVATIVE_SAVER": [
+            {"icon": "Shield", "title": "Fixed Deposits Update", "desc": "SBI FDs now offering 6.5% for 1-year tenure. Lock in rates before RBI cut.", "action": "View FD Rates"},
+            {"icon": "TrendingDown", "title": "Portfolio Safety Check", "desc": "Review your bond allocation — yields are softening.", "action": "Rebalance"},
+            {"icon": "Newspaper", "title": "Insurance Review", "desc": "Health insurance premiums rising — review coverage.", "action": "Compare Plans"},
+        ],
+        "PERSONA_ACTIVE_TRADER": [
+            {"icon": "TrendingUp", "title": "Technical Breakout Alert", "desc": "INFY formed golden cross. 78% probability of 15%+ rally in 6 months.", "action": "View Analysis"},
+            {"icon": "Zap", "title": "Sector Momentum", "desc": "IT stocks showing relative strength vs banking. Check sector rotation.", "action": "View Charts"},
+            {"icon": "BarChart3", "title": "Options Opportunity", "desc": "Nifty weekly IV expansion — premium selling setups forming.", "action": "Scan Strikes"},
+        ],
+        "PERSONA_YOUNG_PROFESSIONAL": [
+            {"icon": "TrendingUp", "title": "SIP Boost Strategy", "desc": "Increase your SIP by ₹500/month. Compound effect over 20 years: ₹50L+ gain.", "action": "Adjust SIP"},
+            {"icon": "Zap", "title": "Tax Savings Opportunity", "desc": "Invest ₹50K in ELSS before March 31 to reduce tax by ₹15,650.", "action": "Invest Now"},
+            {"icon": "Smartphone", "title": "ET Young Minds", "desc": "New masterclass: 'From Salary to Wealth' — Build financial independence.", "action": "Enroll"},
+        ],
+        "PERSONA_CORPORATE_EXECUTIVE": [
+            {"icon": "Briefcase", "title": "Portfolio Rebalancing", "desc": "Your equity allocation has drifted. Review strategic asset allocation.", "action": "Rebalance"},
+            {"icon": "Building2", "title": "Wealth Management Suite", "desc": "PMS and AIF strategies tailored for HNI investors — explore options.", "action": "Consult Advisor"},
+            {"icon": "Newspaper", "title": "Corporate Governance Update", "desc": "ITC dividend hike signals improving corporate health — sector analysis.", "action": "Read Analysis"},
+        ],
+        "PERSONA_HOME_BUYER": [
+            {"icon": "Home", "title": "Home Loan Rate Update", "desc": "SBI home loans at 8.25%. RBI rate cut passed on — lock rate now.", "action": "Compare Offers"},
+            {"icon": "Calculator", "title": "EMI Calculator", "desc": "₹50L loan at 8.25% = ₹48,500 EMI. Check affordability & subsidy eligibility.", "action": "Calculate"},
+            {"icon": "MapPin", "title": "Property Market Trends", "desc": "2025 outlook: 12-15% appreciation in Banglore micro-markets.", "action": "View Trends"},
+        ],
+    }
+    
+    insights = recommended_insights.get(persona, recommended_insights["PERSONA_YOUNG_PROFESSIONAL"])
+    
+    # Persona-specific tools from PERSONA_MAPPING
+    tools = PERSONA_MAPPING.get(persona, {}).get("primary_tools", [])
+    
+    return {
+        "persona": persona,
+        "market_overview": {
+            "nifty": nifty,
+            "sensex": sensex,
+        },
+        "watchlist": watchlist,
+        "news": news[:5],  # Limit to 5 latest news items
+        "recommended_insights": insights,
+        "primary_tools": tools,
+        "editorial_update": editorial_content[:200] + "..." if len(editorial_content) > 200 else editorial_content,
+    }
+
+
 # ─── Public Auth Endpoints ───────────────────────────────────────────────────
 
 class RegisterRequest(PydanticBaseModel):

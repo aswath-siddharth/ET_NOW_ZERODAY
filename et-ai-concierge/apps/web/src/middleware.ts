@@ -5,7 +5,7 @@ export default auth((req) => {
   const { pathname } = req.nextUrl;
 
   // Public routes — no auth required
-  const publicRoutes = ["/", "/login", "/api/auth"];
+  const publicRoutes = ["/", "/auth", "/login", "/api/auth"];
   const isPublic = publicRoutes.some(
     (route) => pathname === route || pathname.startsWith(route + "/")
   );
@@ -20,11 +20,11 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
-  // Protected routes — redirect to login if not authenticated
+  // Protected routes — redirect to auth if not authenticated
   if (!req.auth) {
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("callbackUrl", pathname);
-    return NextResponse.redirect(loginUrl);
+    const authUrl = new URL("/auth", req.url);
+    authUrl.searchParams.set("callbackUrl", pathname);
+    return NextResponse.redirect(authUrl);
   }
 
   return NextResponse.next();
