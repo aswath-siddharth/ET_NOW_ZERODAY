@@ -187,6 +187,7 @@ class OnboardingRequest(BaseModel):
 
 class OnboardingResponse(BaseModel):
     question: Optional[str] = None
+    options: List[str] = Field(default_factory=list)
     step: int
     is_complete: bool = False
     persona: Optional[str] = None

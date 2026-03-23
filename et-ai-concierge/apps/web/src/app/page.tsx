@@ -21,10 +21,10 @@ export default function LandingPage() {
           <Link href="#how-it-works" className="hover:text-foreground transition">How it Works</Link>
         </nav>
         <div className="flex items-center gap-4">
-          <Link href="/login">
+          <Link href="/auth">
             <Button variant="ghost" className="hidden sm:inline-flex">Sign In</Button>
           </Link>
-          <Link href="/login">
+          <Link href="/auth">
             <Button className="rounded-full shadow-lg shadow-primary/20">
               Get Started
             </Button>

@@ -71,7 +71,7 @@ PROFILING_QUESTIONS = [
     {
         "key": "risk_score",
         "question": "On a scale of 1 to 10, how comfortable are you with short-term portfolio losses in exchange for long-term growth?",
-        "options": list(range(1, 11))
+        "options": [str(i) for i in range(1, 11)]
     },
     {
         "key": "interests",
@@ -210,6 +210,7 @@ def get_onboarding_step(step: int) -> OnboardingResponse:
     if step == 0:
         return OnboardingResponse(
             question=WARM_OPEN,
+            options=["Let's start!"],
             step=0,
             is_complete=False,
         )
@@ -219,6 +220,7 @@ def get_onboarding_step(step: int) -> OnboardingResponse:
         q = PROFILING_QUESTIONS[question_idx]
         return OnboardingResponse(
             question=q["question"],
+            options=q.get("options", []),
             step=step,
             is_complete=False,
         )

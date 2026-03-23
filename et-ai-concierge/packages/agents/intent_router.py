@@ -48,7 +48,7 @@ def detect_upsell_intent(query: str, profile: UserProfile) -> Dict[str, Any]:
             )
 
             response = client.chat.completions.create(
-                model=settings.GROQ_MODEL, # We could use a smaller model like llama3-8b-8192 here
+                model="llama3-8b-8192", # Using smaller/faster model for quick intent routing
                 messages=[
                     {"role": "system", "content": ROUTER_PROMPT},
                     {"role": "user", "content": user_context},

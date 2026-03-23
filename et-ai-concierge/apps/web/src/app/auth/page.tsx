@@ -11,17 +11,17 @@ import { Card } from "@/components/ui/card";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
-export default function LoginPage() {
+export default function AuthPage() {
   return (
     <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
-      <LoginForm />
+      <AuthForm />
     </Suspense>
   );
 }
 
-function LoginForm() {
+function AuthForm() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/chat";
+  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

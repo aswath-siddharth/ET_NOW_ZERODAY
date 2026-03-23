@@ -43,7 +43,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     strategy: "jwt",
   },
   pages: {
-    signIn: "/login",
+    signIn: "/auth",
   },
   callbacks: {
     async signIn({ user, account }) {
@@ -81,6 +81,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub as string;
+        
+        // Add auth token seamlessly so Client Components can fetch to FastAPI securely
+        const sessionToken = await mintBackendToken(session);
+        if (sessionToken) {
+          (session as any).accessToken = sessionToken;
+        }
       }
       return session;
     },

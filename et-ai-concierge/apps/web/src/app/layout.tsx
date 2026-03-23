@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "@/components/providers";
+import { FloatingConcierge } from "@/components/FloatingConcierge";
 
 const fontSans = Inter({
   subsets: ["latin"],
@@ -30,6 +31,7 @@ export default function RootLayout({
         <Providers>
           <div className="relative flex min-h-screen flex-col bg-[url('/bg-grid.svg')] bg-cover">
             {children}
+            <FloatingConcierge />
           </div>
         </Providers>
       </body>

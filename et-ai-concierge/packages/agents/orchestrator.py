@@ -91,7 +91,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -394,64 +394,108 @@ async def resume_session(modality: str = "web", auth_user: AuthUser = Depends(ge
 
 # ─── Onboarding Endpoints ────────────────────────────────────────────────────
 
+
 @app.get("/api/onboarding/start")
 async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
-    """Start the onboarding flow."""
+    """Start the onboarding flow using Financial X-Ray."""
     user_id = auth_user.user_id
-    _onboarding_state[user_id] = {"step": 0, "answers": {}}
-    return get_onboarding_step(0).model_dump()
+    
+    _xray_conversations[user_id] = []
+    _xray_question_count[user_id] = 0
+    
+    first_q = run_xray_step([], 0)
+    greeting = XRAY_WARM_OPEN + "\n\n" + first_q
+    _xray_conversations[user_id].append({"role": "assistant", "content": greeting})
+    
+    opts = PROFILING_QUESTIONS[0].get("options", []) if len(PROFILING_QUESTIONS) > 0 else []
 
+    return OnboardingResponse(
+        question=greeting,
+        options=opts,
+        step=0,
+        is_complete=False,
+    ).model_dump()
 
 @app.post("/api/onboarding/answer")
 async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = Depends(get_current_user)):
-    """Submit an onboarding answer."""
-    user_id = request.user_id
-    state = _onboarding_state.get(user_id, {"step": 0, "answers": {}})
-
-    # Process the answer
-    state["answers"] = process_onboarding_answer(request.step, request.answer, state["answers"])
-    next_step = request.step + 1
-    state["step"] = next_step
-    _onboarding_state[user_id] = state
-
-    # Check if complete
-    if next_step > len(PROFILING_QUESTIONS):
-        result = complete_profiling(state["answers"])
-
-        # Update profile
+    """Submit an onboarding answer using Financial X-Ray."""
+    user_id = auth_user.user_id
+    
+    if user_id not in _xray_conversations:
+        _xray_conversations[user_id] = []
+        _xray_question_count[user_id] = 0
+        
+    conv = _xray_conversations[user_id]
+    q_num = _xray_question_count.get(user_id, 0)
+    
+    conv.append({"role": "user", "content": request.answer})
+    q_num += 1
+    _xray_question_count[user_id] = q_num
+    
+    next_response = run_xray_step(conv, q_num)
+    conv.append({"role": "assistant", "content": next_response})
+    _xray_conversations[user_id] = conv
+    
+    extracted = extract_xray_profile(next_response)
+    if extracted:
+        persona_str = map_xray_to_persona(extracted)
+        mapping = PERSONA_MAPPING.get(persona_str, {})
+        tools = [{"name": t, "description": f"Recommended for {persona_str}"} for t in mapping.get("primary_tools", [])]
+        
         profile = _get_profile(user_id)
-        profile.persona = result["persona"]
+        profile.persona = persona_str
         profile.onboarding_complete = True
-        profile.risk_score = state["answers"].get("risk_score", 5)
-        profile.interests = state["answers"].get("interests", [])
-        profile.primary_goal = state["answers"].get("primary_goal")
-        profile.income_type = state["answers"].get("income_type")
-        profile.age_group = state["answers"].get("age_group")
-        profile.profile_completeness = result["profile_completeness"]
+        profile.risk_score = extracted.get("risk_score", 5)
+        profile.interests = extracted.get("interests", [])
+        profile.primary_goal = extracted.get("primary_goal")
+        profile.income_type = extracted.get("income_type")
+        profile.age_group = extracted.get("age_group")
+        profile.profile_completeness = 1.0
         _profiles[user_id] = profile
-
-        # Save to Postgres
+        
         update_user_profile(user_id, profile.model_dump())
+        
+        # Clean up JSON block from message shown to user
+        import re as regex
+        clean_msg = regex.sub(r"```json.*?```", "", next_response, flags=regex.DOTALL).strip()
+        clean_msg = regex.sub(r'\{\s*"xray_complete".*?\}', "", clean_msg, flags=regex.DOTALL).strip()
+        
+        del _xray_conversations[user_id]
+        del _xray_question_count[user_id]
+        
+        # persona_str is an enum sometimes, let's extract the string value.
+        p_val = persona_str.value if hasattr(persona_str, "value") else persona_str
 
         return OnboardingResponse(
-            step=next_step,
+            question=clean_msg,
+            options=[],
+            step=q_num,
             is_complete=True,
-            persona=result["persona"],
-            recommended_tools=result["recommended_tools"],
+            persona=p_val,
+            recommended_tools=tools,
         ).model_dump()
+        
+    opts = []
+    if q_num < len(PROFILING_QUESTIONS):
+        opts = PROFILING_QUESTIONS[q_num].get("options", [])
 
-    return get_onboarding_step(next_step).model_dump()
+    return OnboardingResponse(
+        question=next_response,
+        options=opts,
+        step=q_num,
+        is_complete=False,
+    ).model_dump()
 
 
-# ─── Financial X-Ray Endpoints ────────────────────────────────────────────────
 
-_xray_conversations: Dict[str, list] = {}  # user_id -> conversation history
-_xray_question_count: Dict[str, int] = {}  # user_id -> question number
+from typing import Dict, List, Any, Optional
 
+_xray_conversations: Dict[str, list] = {}
+_xray_question_count: Dict[str, int] = {}
 
 class XRayRequest(PydanticBaseModel):
     user_id: str = "default_user"
-    message: str
+    message: str = ""
     session_id: Optional[str] = None
 
 
