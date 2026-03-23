@@ -37,6 +37,8 @@ function AuthForm() {
     setError("");
 
     try {
+      let isNewUser = false;
+      
       if (isSignUp) {
         // Register first
         const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
@@ -50,6 +52,8 @@ function AuthForm() {
           setLoading(false);
           return;
         }
+        const registerData = await res.json();
+        isNewUser = registerData.is_new || false;
       }
 
       // Sign in with NextAuth
@@ -62,7 +66,9 @@ function AuthForm() {
       if (result?.error) {
         setError(isSignUp ? "Account created but login failed. Try signing in." : "Invalid email or password");
       } else {
-        window.location.href = callbackUrl;
+        // Route new users to onboarding, existing users to their original destination
+        const redirectUrl = isNewUser ? "/onboarding" : callbackUrl;
+        window.location.href = redirectUrl;
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -72,7 +78,21 @@ function AuthForm() {
   };
 
   const handleGoogle = () => {
-    signIn("google", { callbackUrl });
+    console.log("🔵 Google sign-in clicked");
+    try {
+      // For Google OAuth, let NextAuth handle the full redirect flow
+      // After successful auth, the middleware will check onboarding status
+      signIn("google", { 
+        redirectTo: callbackUrl,
+        redirect: true 
+      }).catch((err) => {
+        console.error("❌ Google sign-in error:", err);
+        setError("Google sign-in failed. Please try again.");
+      });
+    } catch (err) {
+      console.error("❌ Google sign-in exception:", err);
+      setError("Something went wrong with Google sign-in.");
+    }
   };
 
   return (

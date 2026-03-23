@@ -283,7 +283,7 @@ def run_profiling_agent(user_message: str, profile: UserProfile) -> AgentRespons
         return AgentResponse(
             agent_id="profiling_agent",
             content=(
-                f"Your profile is already set up! You're mapped as a **{profile.persona.value}**. "
+                f"Your profile is already set up! You're mapped as {profile.persona.value}. "
                 f"Your recommended tools: {tools_str}. "
                 "Would you like to update your preferences?"
             ),
@@ -354,20 +354,20 @@ The JSON block MUST be the last thing in your response. Values should be extract
 XRAY_WARM_OPEN = (
     "Welcome to ET! 👋 I'm your personal Financial Navigator. "
     "Before I connect you to the right parts of our ecosystem, "
-    "I'd love to understand your financial world through a quick **Financial X-Ray**. "
+    "I'd love to understand your financial world through a quick Financial X-Ray. "
     "Just 9 quick questions — takes about 3 minutes.\n\n"
 )
 
 XRAY_FALLBACK_QUESTIONS = [
-    "Let's start simple — are you currently **salaried**, **self-employed**, or a **business owner**?",
-    "Which age bracket are you in — **20s**, **30s**, **40s**, or **50+**?",
-    "Do you have **3–6 months** of expenses saved as an **emergency fund**?",
-    "Are you currently **renting**, or do you **own your home**?",
-    "On a scale of **1 to 10**, how comfortable are you with short-term portfolio losses in exchange for long-term growth?",
-    "Which sectors interest you the most? For example — **Tech, Pharma, Infrastructure, Banking, Real Estate**?",
-    "Are you primarily thinking about the next **1–3 years**, or are you building wealth for **10+ years**?",
-    "Do you **actively trade** stocks, or are you more of a long-term **SIP investor**?",
-    "What's the one financial goal you're most focused on right now — **saving**, **growing wealth**, **protecting assets**, or **buying something big**?",
+    "Let's start simple — are you currently salaried, self-employed, or a business owner?",
+    "Which age bracket are you in — 20s, 30s, 40s, or 50+?",
+    "Do you have 3–6 months of expenses saved as an emergency fund?",
+    "Are you currently renting, or do you own your home?",
+    "On a scale of 1 to 10, how comfortable are you with short-term portfolio losses in exchange for long-term growth?",
+    "Which sectors interest you the most? For example — Tech, Pharma, Infrastructure, Banking, Real Estate?",
+    "Are you primarily thinking about the next 1–3 years, or are you building wealth for 10+ years?",
+    "Do you actively trade stocks, or are you more of a long-term SIP investor?",
+    "What's the one financial goal you're most focused on right now — saving, growing wealth, protecting assets, or buying something big?",
 ]
 
 
@@ -400,8 +400,11 @@ def run_xray_step(
     messages.extend(conversation_history)
 
     # Try Groq first
-    if settings.GROQ_API_KEY:
+    if not settings.GROQ_API_KEY:
+        print("⚠️ GROQ_API_KEY not set, skipping Groq")
+    else:
         try:
+            print(f"🔄 Attempting Groq X-Ray with model {settings.GROQ_MODEL}...")
             from groq import Groq
             client = Groq(api_key=settings.GROQ_API_KEY)
             response = client.chat.completions.create(
@@ -410,9 +413,12 @@ def run_xray_step(
                 temperature=0.7,
                 max_tokens=512,
             )
+            print(f"✓ Groq X-Ray succeeded for question #{question_number + 1}")
             return response.choices[0].message.content
+        except ImportError as e:
+            print(f"⚠️ Groq package not installed: {e}")
         except Exception as e:
-            print(f"⚠️ Groq X-Ray failed: {e}")
+            print(f"⚠️ Groq X-Ray failed: {type(e).__name__}: {e}")
 
     # Try local Ollama
     ollama_model = getattr(settings, "OLLAMA_MODEL", None)
@@ -432,6 +438,7 @@ def run_xray_step(
 
     # Fallback to static questions
     if question_number < len(XRAY_FALLBACK_QUESTIONS):
+        print(f"📋 Using fallback question #{question_number + 1}")
         return XRAY_FALLBACK_QUESTIONS[question_number]
 
     # Extract answers from conversation_history for fallback

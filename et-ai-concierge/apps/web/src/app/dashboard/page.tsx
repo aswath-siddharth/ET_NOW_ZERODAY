@@ -118,6 +118,12 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex gap-3">
+            <Link href="/">
+              <Button variant="outline" className="rounded-xl px-6 shadow-sm border-border/50 hover:bg-secondary">
+                <Home className="mr-2 w-4 h-4" />
+                Home
+              </Button>
+            </Link>
             <Link href="/onboarding">
               <Button className="rounded-xl px-6 shadow-lg bg-red-600 hover:bg-red-700 text-white">
                 Financial X-Ray <ArrowUpRight className="ml-2 w-4 h-4" />

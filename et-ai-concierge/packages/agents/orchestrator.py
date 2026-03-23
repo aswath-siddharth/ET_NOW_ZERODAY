@@ -749,14 +749,14 @@ class VerifyRequest(PydanticBaseModel):
 async def register_user(request: RegisterRequest):
     """Register a new user. Called by NextAuth on first sign-in."""
     from database import create_or_get_user
-    user = create_or_get_user(
+    user, is_new = create_or_get_user(
         email=request.email,
         name=request.name,
         password=request.password,
         provider=request.provider,
     )
     if user:
-        return {"id": str(user["id"]), "email": user.get("email"), "name": user.get("name")}
+        return {"id": str(user["id"]), "email": user.get("email"), "name": user.get("name"), "is_new": is_new}
     raise HTTPException(status_code=400, detail="Could not create user")
 
 

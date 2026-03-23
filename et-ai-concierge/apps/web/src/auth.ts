@@ -10,6 +10,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      allowDangerousEmailAccountLinking: true,
     }),
     Credentials({
       name: "Email",
@@ -45,6 +46,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   pages: {
     signIn: "/auth",
   },
+  basePath: "/api/auth",
   callbacks: {
     async signIn({ user, account }) {
       // On OAuth sign-in, register the user in our backend
@@ -63,6 +65,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const dbUser = await res.json();
             // Store the DB id so we can use it as the sub claim
             user.id = dbUser.id;
+            // Store is_new flag for routing to onboarding
+            (user as any).is_new = dbUser.is_new;
           }
         } catch {
           // Non-blocking — user can still sign in
@@ -73,6 +77,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.sub = user.id;
+        // Forward is_new flag from user to token
+        if ((user as any).is_new !== undefined) {
+          (token as any).is_new = (user as any).is_new;
+        }
         token.email = user.email;
         token.name = user.name;
       }

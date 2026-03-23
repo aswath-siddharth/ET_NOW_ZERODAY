@@ -164,8 +164,8 @@ def create_or_get_user(
     password: Optional[str] = None,
     provider: str = "credentials",
     image: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """Create a new user by email or return existing one. Used by auth flow."""
+) -> tuple[Optional[Dict[str, Any]], bool]:
+    """Create a new user by email or return existing one. Used by auth flow. Returns (user_dict, is_new)."""
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -176,7 +176,7 @@ def create_or_get_user(
         if existing:
             cur.close()
             conn.close()
-            return dict(existing)
+            return dict(existing), False
         
         # Hash password if provided
         hashed_pw = None
@@ -195,10 +195,10 @@ def create_or_get_user(
         conn.commit()
         cur.close()
         conn.close()
-        return dict(row) if row else None
+        return (dict(row) if row else None), True
     except Exception as e:
         print(f"⚠️ Could not create_or_get_user: {e}")
-        return None
+        return None, False
 
 
 def verify_user_credentials(email: str, password: str) -> Optional[Dict[str, Any]]:

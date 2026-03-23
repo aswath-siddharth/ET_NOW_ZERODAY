@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, Sparkles, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -140,6 +141,15 @@ export default function OnboardingPage() {
 
   return (
     <div className="min-h-screen flex flex-col max-w-2xl mx-auto p-6 md:p-12 pt-24">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Financial X-Ray</h1>
+        <Link href="/">
+          <Button variant="ghost" size="icon" className="h-9 w-9">
+            <Home className="w-4 h-4" />
+          </Button>
+        </Link>
+      </div>
+      
       <div className="flex-1 overflow-y-auto mb-8 pr-4 space-y-6 scrollbar-hide">
         {/* History */}
         {history.map((item, i) => (

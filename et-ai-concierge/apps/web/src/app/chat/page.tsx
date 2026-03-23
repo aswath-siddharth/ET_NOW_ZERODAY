@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { Mic, Send, Bot, User, ShieldAlert, BadgeInfo, Sparkles, CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+import { Mic, Send, Bot, User, ShieldAlert, BadgeInfo, Sparkles, CheckCircle2, Home } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion, AnimatePresence } from "framer-motion";
@@ -503,17 +504,24 @@ export default function ChatPage() {
         {/* Header */}
         <header className="h-14 border-b border-border/40 flex items-center px-4 backdrop-blur-md sticky top-0 bg-background/50 z-10">
           <div className="md:hidden font-bold mr-auto">ET Concierge</div>
-          <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-            {xrayState === "active" && (
-              <span className="flex items-center gap-1.5 text-primary font-medium">
-                <Sparkles className="w-3.5 h-3.5" />
-                Financial X-Ray — Q{Math.min(xrayStep + 1, 9)} of 9
+          <div className="ml-auto flex items-center gap-3">
+            <Link href="/">
+              <Button variant="ghost" size="icon" className="h-9 w-9">
+                <Home className="w-4 h-4" />
+              </Button>
+            </Link>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              {xrayState === "active" && (
+                <span className="flex items-center gap-1.5 text-primary font-medium">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Financial X-Ray — Q{Math.min(xrayStep + 1, 9)} of 9
+                </span>
+              )}
+              <span className="flex items-center gap-1.5">
+                <BadgeInfo className="w-4 h-4" />
+                Multi-Agent Active
               </span>
-            )}
-            <span className="flex items-center gap-1.5">
-              <BadgeInfo className="w-4 h-4" />
-              Multi-Agent Active
-            </span>
+            </div>
           </div>
         </header>
 
