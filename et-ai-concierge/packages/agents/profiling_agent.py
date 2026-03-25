@@ -418,7 +418,17 @@ def run_xray_step(
         except ImportError as e:
             print(f"⚠️ Groq package not installed: {e}")
         except Exception as e:
-            print(f"⚠️ Groq X-Ray failed: {type(e).__name__}: {e}")
+            error_str = str(e)
+            
+            # Check for rate limit errors (429)
+            if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
+                print(f"⚠️ Groq Rate Limit Exceeded: {type(e).__name__}")
+                print("ℹ️ Falling back to static questions due to Groq rate limit")
+            # Check for auth errors (401)
+            elif "401" in error_str or "unauthorized" in error_str.lower():
+                print(f"⚠️ Groq Authentication Error: Invalid API key")
+            else:
+                print(f"⚠️ Groq X-Ray failed: {type(e).__name__}: {e}")
 
     # Try local Ollama
     ollama_model = getattr(settings, "OLLAMA_MODEL", None)

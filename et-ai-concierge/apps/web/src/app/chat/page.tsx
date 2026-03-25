@@ -26,7 +26,7 @@ type Message = {
   isXray?: boolean;
 };
 
-type XRayState = "idle" | "active" | "complete";
+
 
 // ─── Typing Indicator ────────────────────────────────────────────────────────
 function TypingIndicator() {
@@ -199,32 +199,15 @@ function OnboardingCompleteCard({
   );
 }
 
-// ─── X-Ray Question Detection ────────────────────────────────────────────────
-const XRAY_QUICK_REPLIES: Record<number, string[]> = {
-  0: ["Salaried", "Self-employed", "Business owner", "Others"],
-  1: ["20s", "30s", "40s", "50+"],
-  2: ["Yes", "No", "Working on it"],
-  3: ["Renting", "Owning", "Others"],
-  4: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-  5: ["Tech", "Pharma", "Banking", "Infrastructure", "Real Estate", "FMCG", "Gold", "Crypto", "Others"],
-  6: ["1-3 years", "3-5 years", "5-10 years", "10+ years"],
-  7: ["Active trader", "SIP investor", "Both", "Others"],
-  8: ["Saving", "Growing wealth", "Protecting assets", "Buying something big", "Others"],
-};
-
 // ─── Main Chat Page ──────────────────────────────────────────────────────────
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [xrayState, setXrayState] = useState<XRayState>("idle");
-  const [xrayStep, setXrayStep] = useState(0);
   const [sessionId, setSessionId] = useState<string>("");
   const { data: session } = useSession();
   const [userId] = useState(() => session?.user?.id || `anon_${Math.random().toString(36).substr(2, 9)}`);
-  const [xrayPersona, setXrayPersona] = useState<string>("");
-  const [xrayTools, setXrayTools] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll
@@ -234,130 +217,9 @@ export default function ChatPage() {
     }
   }, [messages, isLoading]);
 
-  // Start X-Ray on mount
-  useEffect(() => {
-    startXray();
-  }, []);
 
-  const startXray = async () => {
-    setIsLoading(true);
-    setXrayState("active");
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/chat/xray`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, message: "" }),
-      });
-      const data = await res.json();
-      setSessionId(data.session_id || "");
 
-      if (data.is_complete) {
-        setXrayState("complete");
-        setMessages([
-          {
-            id: "1",
-            role: "assistant",
-            content: data.message,
-            agentUsed: "profiling_agent",
-            isXray: true,
-          },
-        ]);
-      } else {
-        setMessages([
-          {
-            id: "1",
-            role: "assistant",
-            content: data.message,
-            agentUsed: "profiling_agent",
-            isXray: true,
-          },
-        ]);
-        setXrayStep(0);
-      }
-    } catch (error) {
-      console.error("Failed to start X-Ray:", error);
-      // Fallback greeting
-      setMessages([
-        {
-          id: "1",
-          role: "assistant",
-          content:
-            "Welcome to ET! 👋 I'm your personal Financial Navigator. I'd love to understand your financial world. Let's start — are you currently **salaried**, **self-employed**, or a **business owner**?",
-          isXray: true,
-        },
-      ]);
-      setXrayStep(0);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  const sendXrayAnswer = useCallback(
-    async (answer: string) => {
-      if (isLoading) return;
-
-      const msgId = Date.now().toString();
-      setMessages((prev) => [
-        ...prev,
-        { id: msgId, role: "user", content: answer },
-      ]);
-      setIsLoading(true);
-
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/chat/xray`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_id: userId,
-            message: answer,
-            session_id: sessionId,
-          }),
-        });
-        const data = await res.json();
-
-        const asstId = (Date.now() + 1).toString();
-
-        // Strip the JSON block from the displayed message
-        let displayContent = data.message || "";
-        displayContent = displayContent
-          .replace(/```json\s*\{[\s\S]*?\}\s*```/g, "")
-          .replace(/\{"xray_complete"[\s\S]*?\}/g, "")
-          .trim();
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: asstId,
-            role: "assistant",
-            content: displayContent,
-            agentUsed: "profiling_agent",
-            isXray: true,
-          },
-        ]);
-
-        if (data.is_complete) {
-          setXrayState("complete");
-          setXrayPersona(data.persona || "");
-          setXrayTools(data.recommended_tools || []);
-        } else {
-          setXrayStep((prev) => prev + 1);
-        }
-      } catch (error) {
-        console.error("X-Ray error:", error);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            role: "assistant",
-            content: "Sorry, I encountered an error. Please try again.",
-          },
-        ]);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [isLoading, sessionId]
-  );
 
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -365,14 +227,6 @@ export default function ChatPage() {
 
     const userMsg = input;
     setInput("");
-
-    // If X-Ray is active, route to X-Ray
-    if (xrayState === "active") {
-      sendXrayAnswer(userMsg);
-      return;
-    }
-
-    // Normal chat flow
     const msgId = Date.now().toString();
     setMessages((prev) => [
       ...prev,
@@ -436,9 +290,8 @@ export default function ChatPage() {
     return names[agentId] || agentId;
   };
 
-  // Determine quick replies for current X-Ray step
-  const currentQuickReplies =
-    xrayState === "active" && !isLoading ? XRAY_QUICK_REPLIES[xrayStep] : undefined;
+  // Determine quick replies (if any)
+  const currentQuickReplies = undefined;
 
   return (
     <div className="flex h-screen bg-background">
@@ -453,22 +306,6 @@ export default function ChatPage() {
 
         <div className="space-y-2 flex-1 overflow-auto">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            Status
-          </div>
-          {xrayState === "active" && (
-            <div className="flex items-center gap-2 text-xs text-primary p-2 bg-primary/5 rounded-lg border border-primary/20">
-              <Sparkles className="w-3.5 h-3.5" />
-              Financial X-Ray in progress
-            </div>
-          )}
-          {xrayState === "complete" && (
-            <div className="flex items-center gap-2 text-xs text-green-500 p-2 bg-green-500/5 rounded-lg border border-green-500/20">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Profile complete
-            </div>
-          )}
-
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-4 mb-2">
             Recent Chats
           </div>
           <Button
@@ -511,12 +348,6 @@ export default function ChatPage() {
               </Button>
             </Link>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              {xrayState === "active" && (
-                <span className="flex items-center gap-1.5 text-primary font-medium">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Financial X-Ray — Q{Math.min(xrayStep + 1, 9)} of 9
-                </span>
-              )}
               <span className="flex items-center gap-1.5">
                 <BadgeInfo className="w-4 h-4" />
                 Multi-Agent Active
@@ -563,11 +394,18 @@ export default function ChatPage() {
                     >
                       {m.role === "assistant" ? (
                         <div className="prose prose-sm dark:prose-invert max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {m.content}
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
+                        <ReactMarkdown 
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            a: ({ node, ...props }) => (
+                              <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline hover:text-blue-700 font-medium" />
+                            ),
+                          }}
+                        >
+                          {m.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
                         <div className="text-sm whitespace-pre-wrap">
                           {m.content}
                         </div>
@@ -577,7 +415,6 @@ export default function ChatPage() {
                     {/* Agent Badge */}
                     {m.agentUsed && (
                       <div className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                        {m.isXray && <Sparkles className="w-2.5 h-2.5" />}
                         {getAgentBadge(m.agentUsed)}
                       </div>
                     )}
@@ -593,14 +430,9 @@ export default function ChatPage() {
             {currentQuickReplies && (
               <QuickReplyChips
                 options={currentQuickReplies}
-                onSelect={(option) => sendXrayAnswer(option)}
+                onSelect={(option) => handleChatSubmit({ preventDefault: () => {}, currentTarget: { elements: { message: { value: option } } } } as any)}
                 disabled={isLoading}
               />
-            )}
-
-            {/* Onboarding Complete Card */}
-            {xrayState === "complete" && xrayPersona && (
-              <OnboardingCompleteCard persona={xrayPersona} tools={xrayTools} />
             )}
 
             <div ref={scrollRef} />
@@ -625,11 +457,7 @@ export default function ChatPage() {
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={
-                  xrayState === "active"
-                    ? "Type your answer or tap a quick reply..."
-                    : "Ask about markets, loans, or specific stocks..."
-                }
+                placeholder="Ask about markets, loans, or specific stocks..."
                 className="h-12 rounded-xl pr-12 bg-secondary/30 ring-offset-background border-border/50 text-base"
                 disabled={isLoading}
               />

@@ -146,7 +146,13 @@ export function FloatingConcierge() {
                                     >
                                         <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                                             {msg.role === "assistant" ? (
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                <ReactMarkdown components={{
+                                                    a: ({ node, ...props }) => (
+                                                        <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline hover:text-blue-700 font-medium" />
+                                                    ),
+                                                }}>
+                                                    {msg.content}
+                                                </ReactMarkdown>
                                             ) : (
                                                 msg.content
                                             )}

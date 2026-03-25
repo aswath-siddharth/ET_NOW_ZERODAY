@@ -81,7 +81,13 @@ When you synthesize the final response:
 - Be conversational, not corporate.
 - Never give generic advice. Always cite a specific ET tool, story, or product.
 - If the user seems anxious, lower jargon density and increase reassurance.
-- If the user is an active trader, be precise and data-dense."""
+- If the user is an active trader, be precise and data-dense.
+
+CRITICAL: Format all ET resources as clickable markdown links:
+- Every mention of an ET article, guide, tool, course, or resource MUST be formatted as [Title](URL)
+- Examples: [ET Guide to Cryptocurrency Investing](https://economictimes.indiatimes.com/...), [ET Masterclass on Cryptocurrency](https://economictimes.indiatimes.com/...)
+- Never leave resource references as plain text like "ET Guide to Cryptocurrency Investing" — always include the URL
+- If you don't have the exact URL, construct a reasonable one based on ET's domain structure"""
 
 app = FastAPI(
     title="ET AI Concierge API",
@@ -107,9 +113,22 @@ async def startup():
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
 def _get_profile(user_id: str) -> UserProfile:
-    """Get or create user profile."""
+    """Get or create user profile. Check memory first, then database, then create new."""
+    # Check in-memory cache first
     if user_id in _profiles:
         return _profiles[user_id]
+    
+    # Check database
+    try:
+        db_user = get_user(user_id)
+        if db_user:
+            profile = UserProfile(**db_user)
+            _profiles[user_id] = profile
+            return profile
+    except Exception as e:
+        print(f"⚠️ Failed to load profile from database: {e}")
+    
+    # Create new profile only if not in memory or database
     profile = UserProfile(id=user_id)
     _profiles[user_id] = profile
     return profile
@@ -168,10 +187,9 @@ def route_to_agent(message: str, intent: IntentType, profile: UserProfile) -> st
     """Determine which agent should handle this message."""
     msg = message.lower()
 
-    # Profile incomplete → profiling agent
-    if not profile.onboarding_complete and calculate_profile_completeness({}) < 0.6:
-        if any(w in msg for w in ["start", "hello", "hi", "new", "first"]):
-            return "profiling_agent"
+    # Profile incomplete → profiling agent (always route if onboarding not complete)
+    if not profile.onboarding_complete:
+        return "profiling_agent"
 
     # Market data queries → market intelligence
     if any(w in msg for w in [
@@ -210,6 +228,105 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
     if not groq_client:
         return agent_response.content
 
+    # Reference mapping for common ET resources (helps LLM format links correctly)
+    ET_RESOURCES_MAPPING = {
+        # Markets & Data
+        "ET Market Data": "https://economictimes.indiatimes.com/markets/live-coverage",
+        "ET Markets": "https://economictimes.indiatimes.com/markets",
+        "ET IPO Hub": "https://economictimes.indiatimes.com/markets/ipo",
+        "IPO Investing Guide": "https://economictimes.indiatimes.com/markets/ipo",
+        "ET Markets Crypto Tracker": "https://economictimes.indiatimes.com/markets/cryptocurrency",
+        "Stock Reports Plus": "https://economictimes.indiatimes.com/markets/benefits/stockreportsplus",
+        "Stock Market Mood": "https://economictimes.indiatimes.com/markets/stock-market-mood",
+        "Stock Recommendations": "https://economictimes.indiatimes.com/markets/stock-recos/overview",
+        "Alpha Trades": "https://economictimes.indiatimes.com/markets/stocks/recos",
+        "BigBull Portfolio": "https://economictimes.indiatimes.com/markets/top-india-investors-portfolio/individual",
+        "Stock Screeners": "https://economictimes.indiatimes.com/markets/stock-screener",
+        "Indices": "https://economictimes.indiatimes.com/markets/indices",
+        "StockTalk": "https://economictimes.indiatimes.com/etmarkets-livestream",
+        "CandleStick Screener": "https://economictimes.indiatimes.com/markets/candlestick-screener",
+        "Market Moguls": "https://economictimes.indiatimes.com/markets/market-moguls",
+        
+        # News & Categories
+        "News and Politics": "https://economictimes.indiatimes.com/news",
+        "Politics": "https://economictimes.indiatimes.com/news/politics",
+        "Industry": "https://economictimes.indiatimes.com/industry",
+        "Tech": "https://economictimes.indiatimes.com/tech",
+        "SME": "https://economictimes.indiatimes.com/small-biz",
+        
+        # Wealth & Personal Finance
+        "ET Wealth": "https://economictimes.indiatimes.com/personal-finance",
+        "ET Wealth Financial Goal Planner": "https://economictimes.indiatimes.com/wealth/financialfitness",
+        "ET Wealth Edition": "https://economictimes.indiatimes.com/wealth/plan",
+        "ET Wealth SIP Guide": "https://economictimes.indiatimes.com/wealth/invest",
+        "Invest for Wealth": "https://economictimes.indiatimes.com/wealth/invest",
+        "Insurance Plans": "https://economictimes.indiatimes.com/wealth/insure",
+        "Loans": "https://economictimes.indiatimes.com/wealth/borrow",
+        "Loan Marketplace": "https://economictimes.indiatimes.com/wealth/borrow",
+        "Legal / Will": "https://economictimes.indiatimes.com/wealth/legal/will",
+        "Real Estate": "https://economictimes.indiatimes.com/wealth/real-estate",
+        "Top Credit Cards": "https://economictimes.indiatimes.com/wealth/spend/credit-cards",
+        "P2P": "https://economictimes.indiatimes.com/wealth/peer-to-peer",
+        "Financial Calculators": "https://economictimes.indiatimes.com/personal-finance/calculators",
+        "FD Interest Rates": "https://economictimes.indiatimes.com/wealth/fd-interest-rates",
+        "Home Loan EMI Calculator": "https://economictimes.indiatimes.com/wealth/real-estate",
+        "NPS Calculator": "https://economictimes.indiatimes.com/wealth/calculators/nps-calculator",
+        "RBI Rate Tracker": "https://economictimes.indiatimes.com/wealth/invest",
+        
+        # Mutual Funds
+        "ET Mutual Funds": "https://economictimes.indiatimes.com/mutual-funds",
+        "Mutual Fund Strategies": "https://economictimes.indiatimes.com/mf/strategies",
+        "Mutual Fund Screener": "https://economictimes.indiatimes.com/mutual-fund-screener",
+        "ELSS": "https://economictimes.indiatimes.com/mf/elss-mutual-fund",
+        
+        # Learning & Education
+        "ET Learn": "https://economictimes.indiatimes.com/market-data/et-learn/articlelist/111840820.cms",
+        "ET Investment Strategies": "https://economictimes.indiatimes.com/market-data/et-learn/investment-strategies/articlelist/111840913.cms",
+        "ET Guide to cryptocurrency": "https://economictimes.indiatimes.com/markets/cryptocurrency",
+        "Cryptocurrency Investment Strategies": "https://economictimes.indiatimes.com/wealth/cryptocurrency",
+        "ET Guide to Cryptocurrency Investing": "https://economictimes.indiatimes.com/wealth/cryptocurrency",
+        "Tax Saving Strategies": "https://economictimes.indiatimes.com/wealth/all-about-tax-savings/newslist/67432481.cms",
+        "ET Guide to Tax Saving": "https://economictimes.indiatimes.com/wealth/tax",
+        
+        # Masterclasses & Courses
+        "ET Masterclass": "https://economictimes.indiatimes.com/masterclass",
+        "ET Masterclass on Cryptocurrency and Blockchain": "https://economictimes.indiatimes.com/masterclass",
+        "Young Mind Entrepreneurship Program": "https://economictimes.indiatimes.com/masterclass",
+        "Technical Analysis Masterclass": "https://economictimes.indiatimes.com/masterclass",
+        "Financial Freedom Masterclass": "https://economictimes.indiatimes.com/masterclass/money-mastery",
+        "Build Passive Income with Mutual Funds": "https://economictimes.indiatimes.com/masterclass/mutual-funds-workshop",
+        "Psychology of Money": "https://economictimes.indiatimes.com/masterclass",
+        "Strategic Leadership Masterclass": "https://economictimes.indiatimes.com/masterclass",
+        "Value & Valuation Masterclass": "https://economictimes.indiatimes.com/masterclass/value-valuation",
+        "AI for Business Leaders": "https://economictimes.indiatimes.com/masterclass",
+        
+        # Opinion & Editorial
+        "ET Editorial": "https://economictimes.indiatimes.com/opinion/et-editorial",
+        "ET Commentary": "https://economictimes.indiatimes.com/opinion/et-commentary",
+        "ET View": "https://economictimes.indiatimes.com/opinion/et-view",
+        "ET Explains": "https://economictimes.indiatimes.com/news/et-explains",
+        
+        # Lifestyle & Special Sections
+        "ET Prime": "https://economictimes.indiatimes.com/et-prime",
+        "Panache": "https://economictimes.indiatimes.com/panache",
+        "ET magazine": "https://economictimes.indiatimes.com/sunday-et",
+        "ET Evoke": "https://economictimes.indiatimes.com/et-evoke",
+        "NRI": "https://economictimes.indiatimes.com/nri",
+        "Young Mind Program": "https://economictimes.indiatimes.com/wealth",
+        
+        # AI & Careers
+        "AI Insights": "https://ai.economictimes.com/",
+        "Careers": "https://economictimes.indiatimes.com/jobs",
+        
+        # Other
+        "Today's ePaper": "https://epaper.indiatimes.com/",
+        "ET Intelligence": "https://etintelligence.com",
+    }
+    
+    resource_reference = "Available ET Resources:\n"
+    for resource_name, url in ET_RESOURCES_MAPPING.items():
+        resource_reference += f"- {resource_name}: {url}\n"
+
     try:
         tone_instruction = ""
         if sentiment == SentimentType.ANXIOUS:
@@ -221,7 +338,15 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
             
         system_content = f"{SYSTEM_PROMPT}\n\n{tone_instruction}"
         
-        synthesis_instruction = "Now synthesize this into a conversational, helpful response. Keep the data and links intact."
+        synthesis_instruction = (
+            "Now synthesize this into a conversational, helpful response. "
+            "CRITICAL: Format all article references and ET tool links as clickable markdown links using [Title](URL) syntax. "
+            "For any ET article, guide, tool, masterclass, or course mentioned, ALWAYS include the full URL in markdown format. "
+            "Use the resource reference mapping provided to find the correct URLs. "
+            "Do NOT use placeholder text like [link to article] — always provide actual URLs. "
+            "Example: [ET Guide to Tax Saving](https://economictimes.indiatimes.com/wealth/tax/tax-saving-guide)\n\n"
+            f"{resource_reference}"
+        )
         if upsell_data:
             synthesis_instruction += (
                 "\n\nYou have additionally detected a cross-sell opportunity based on the user's intent. "
@@ -244,22 +369,123 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"⚠️ LLM synthesis failed: {e}")
-        return agent_response.content
+        error_str = str(e)
+        
+        # Check for rate limit errors (429)
+        if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
+            print(f"⚠️ Groq Rate Limit Exceeded: {e}")
+            print("ℹ️ Returning agent response without LLM synthesis due to rate limits")
+            return agent_response.content
+        
+        # Check for auth errors (401)
+        elif "401" in error_str or "unauthorized" in error_str.lower():
+            print(f"⚠️ Groq Authentication Error: {e}")
+            return agent_response.content
+        
+        # Generic fallback
+        else:
+            print(f"⚠️ LLM synthesis failed: {e}")
+            return agent_response.content
 
 
 # ─── API Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health_check():
+    groq_status = "ok"
+    groq_message = ""
+    
+    if groq_client:
+        try:
+            # Quick test to verify Groq is accessible
+            test_response = groq_client.chat.completions.create(
+                model=settings.GROQ_MODEL,
+                messages=[{"role": "user", "content": "ping"}],
+                temperature=0.0,
+                max_tokens=10,
+            )
+            groq_status = "ok"
+            groq_message = "Groq API is operational"
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate_limit" in error_str.lower():
+                groq_status = "rate_limited"
+                groq_message = "Groq Rate Limit Exceeded - API calls will use fallbacks"
+            elif "401" in error_str:
+                groq_status = "auth_error"
+                groq_message = "Groq Authentication Failed - Check API key"
+            else:
+                groq_status = "error"
+                groq_message = f"Groq Error: {type(e).__name__}"
+    
     return {
         "status": "ok",
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "services": {
             "redis": redis_client is not None,
             "groq_llm": groq_client is not None,
+            "groq_status": groq_status,
+            "groq_message": groq_message,
         }
     }
+
+
+@app.get("/api/groq-status")
+def groq_status_check():
+    """Check Groq API rate limit and authentication status."""
+    if not groq_client:
+        return {
+            "available": False,
+            "status": "not_configured",
+            "message": "Groq API key not configured",
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+        }
+    
+    try:
+        # Quick ping to Groq to check rate limit and auth status
+        response = groq_client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0.0,
+            max_tokens=10,
+        )
+        
+        return {
+            "available": True,
+            "status": "ok",
+            "message": "Groq API is operational with no rate limits",
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "model": settings.GROQ_MODEL,
+        }
+    except Exception as e:
+        error_str = str(e)
+        
+        if "429" in error_str or "rate_limit" in error_str.lower():
+            return {
+                "available": False,
+                "status": "rate_limited",
+                "message": "Groq Rate Limit Exceeded - Please try again later",
+                "error": error_str,
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "model": settings.GROQ_MODEL,
+            }
+        elif "401" in error_str or "unauthorized" in error_str.lower():
+            return {
+                "available": False,
+                "status": "auth_failed",
+                "message": "Groq Authentication Failed - Invalid API key",
+                "error": error_str,
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+            }
+        else:
+            return {
+                "available": False,
+                "status": "error",
+                "message": f"Groq API error: {type(e).__name__}",
+                "error": error_str,
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "model": settings.GROQ_MODEL,
+            }
 
 
 @app.post("/api/chat", response_model=ChatResponse)

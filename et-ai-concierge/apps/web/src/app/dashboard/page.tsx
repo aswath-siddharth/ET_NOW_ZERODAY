@@ -54,6 +54,30 @@ export default function DashboardPage() {
     router.push("/");
   };
 
+  const handleInsightAction = (action: string) => {
+    // Map action labels to routes
+    const actionRoutes: Record<string, string> = {
+      "Adjust SIP": "/marketplace?filter=sip",
+      "Invest Now": "/marketplace?filter=elss",
+      "Enroll": "/chat?query=ET+Young+Minds+Masterclass",
+      "Rebalance": "/chat?query=portfolio+rebalancing",
+      "Consult Advisor": "/chat?query=wealth+management",
+      "Compare Plans": "/chat?query=insurance+plans",
+      "View Analysis": "/chat?query=stock+analysis",
+      "View Charts": "/chat?query=technical+analysis",
+      "Scan Strikes": "/chat?query=options+opportunities",
+      "Compare Offers": "/chat?query=home+loan+comparison",
+      "Calculate": "/chat?query=emi+calculator",
+      "View Trends": "/chat?query=property+market+trends",
+      "Read Analysis": "/chat?query=corporate+governance",
+    };
+    
+    const route = actionRoutes[action];
+    if (route) {
+      router.push(route);
+    }
+  };
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth");
@@ -187,7 +211,7 @@ export default function DashboardPage() {
                 watchlist.map((stock: any, idx: number) => (
                   <div key={idx} className="flex justify-between items-center border-b pb-2 last:border-0">
                     <div>
-                      <div className="font-semibold text-sm text-zinc-900">{stock.symbol}</div>
+                      <div className="font-semibold text-sm text-white">{stock.symbol}</div>
                       <div className="text-xs text-zinc-500">₹{stock.current_price?.toFixed(2) || "N/A"}</div>
                     </div>
                     <div className={`text-sm font-bold ${stock.percent_change >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -214,7 +238,7 @@ export default function DashboardPage() {
                    title={insight.title} 
                    desc={insight.desc} 
                    action={insight.action}
-                   onClick={() => {}} 
+                   onClick={() => handleInsightAction(insight.action)} 
                  />
                ))
              ) : (
