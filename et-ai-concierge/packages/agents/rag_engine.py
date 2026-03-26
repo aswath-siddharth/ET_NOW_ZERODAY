@@ -1,8 +1,10 @@
 """
 ET AI Concierge — RAG Engine
-Retrieval-Augmented Generation: embed query → pgvector search → persona-aware LLM generation.
+Retrieval-Augmented Generation: hybrid search across PostgreSQL + Qdrant with reranking
 """
 import json
+import sys
+import os
 from typing import Dict, Any, List, Optional
 
 try:
@@ -11,6 +13,20 @@ try:
     psycopg2.extras.register_uuid()
 except ImportError:
     psycopg2 = None
+
+try:
+    from qdrant_client import QdrantClient
+except ImportError:
+    QdrantClient = None
+
+try:
+    # Import reranker from packages/rag/reranking/
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "rag", "reranking"))
+    from reranker import rerank
+    RERANKER_AVAILABLE = True
+except ImportError:
+    RERANKER_AVAILABLE = False
+    print("⚠️ Reranker not available - using similarity-based ranking only")
 
 from config import settings
 
@@ -43,53 +59,141 @@ def embed_query(text: str) -> Optional[List[float]]:
     return embedding.tolist()
 
 
+# ─── Reranking ─────────────────────────────────────────────────────────────────
+
+def _rerank_results(query: str, results: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    """
+    Optional reranking step: use cross-encoder to improve relevance.
+    If reranker unavailable, returns results as-is (sorted by similarity).
+    This improves ranking quality without extra infrastructure.
+    """
+    if not RERANKER_AVAILABLE or not results:
+        return results[:top_k]
+    
+    try:
+        # Rerank by relevance using cross-encoder
+        reranked = rerank(
+            query=query,
+            documents=results,
+            top_n=top_k,
+            text_key="chunk_text"  # Use chunk_text as the document content field
+        )
+        print(f"✅ Reranked {len(results)} results → top {len(reranked)} by relevance")
+        return reranked
+    except Exception as e:
+        print(f"⚠️ Reranking failed: {e}, returning original ranking")
+        return results[:top_k]
+
+
 # ─── Retrieval ────────────────────────────────────────────────────────────────
+
+def retrieve_from_qdrant(query_embedding: List[float], top_k: int = 10) -> List[Dict[str, Any]]:
+    """
+    Search Qdrant vector database for et_news_articles collection.
+    Returns list of documents with metadata and similarity scores.
+    """
+    if QdrantClient is None:
+        return []
+    
+    try:
+        client = QdrantClient(
+            url=settings.get("QDRANT_URL", "http://localhost:6333"),
+            api_key=settings.get("QDRANT_API_KEY"),
+            timeout=10
+        )
+        
+        # Search the et_news_articles collection
+        search_result = client.search(
+            collection_name="et_news_articles",
+            query_vector=query_embedding,
+            limit=top_k,
+            score_threshold=0.5  # Only return results with similarity > 0.5
+        )
+        
+        documents = []
+        for point in search_result:
+            doc = {
+                "id": point.id,
+                "chunk_text": point.payload.get("text", ""),
+                "metadata": point.payload,
+                "similarity": point.score,
+                "source": "qdrant",
+                "title": point.payload.get("title", ""),
+                "source_url": point.payload.get("source_url", ""),
+                "tags": point.payload.get("tags", [])
+            }
+            documents.append(doc)
+        
+        return documents
+    except Exception as e:
+        print(f"⚠️ Qdrant search failed: {e}")
+        return []
+
 
 def retrieve(query: str, top_k: int = 3, category: str = None) -> List[Dict[str, Any]]:
     """
-    Embed the query and perform cosine similarity search in pgvector.
-    Returns top-k most relevant chunks with metadata.
+    Hybrid retrieval: search both PostgreSQL (pgvector) and Qdrant.
+    Embed the query and perform cosine similarity search in both databases.
+    Returns top-k most relevant chunks merged and ranked by similarity.
     """
     query_embedding = embed_query(query)
     if query_embedding is None:
         return []
 
-    if not psycopg2:
-        return []
+    pg_results = []
+    if psycopg2:
+        try:
+            conn = psycopg2.connect(settings.DATABASE_URL)
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if category:
+                    cur.execute("""
+                        SELECT
+                            id, article_id, title, category, chunk_text,
+                            chunk_index, source_url, tags, paywall,
+                            1 - (embedding <=> %s::vector) AS similarity
+                        FROM knowledge_base
+                        WHERE category = %s
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                    """, (str(query_embedding), category, str(query_embedding), top_k))
+                else:
+                    cur.execute("""
+                        SELECT
+                            id, article_id, title, category, chunk_text,
+                            chunk_index, source_url, tags, paywall,
+                            1 - (embedding <=> %s::vector) AS similarity
+                        FROM knowledge_base
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                    """, (str(query_embedding), str(query_embedding), top_k))
 
-    try:
-        conn = psycopg2.connect(settings.DATABASE_URL)
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            if category:
-                cur.execute("""
-                    SELECT
-                        id, article_id, title, category, chunk_text,
-                        chunk_index, source_url, tags, paywall,
-                        1 - (embedding <=> %s::vector) AS similarity
-                    FROM knowledge_base
-                    WHERE category = %s
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                """, (str(query_embedding), category, str(query_embedding), top_k))
-            else:
-                cur.execute("""
-                    SELECT
-                        id, article_id, title, category, chunk_text,
-                        chunk_index, source_url, tags, paywall,
-                        1 - (embedding <=> %s::vector) AS similarity
-                    FROM knowledge_base
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                """, (str(query_embedding), str(query_embedding), top_k))
+                pg_results = [dict(r) for r in cur.fetchall()]
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ PostgreSQL RAG retrieval error: {e}")
 
-            results = cur.fetchall()
-        conn.close()
+    # Query Qdrant vector database
+    qdrant_results = retrieve_from_qdrant(query_embedding, top_k=top_k)
 
-        return [dict(r) for r in results]
+    # Merge results: de-duplicate by content and rank by similarity
+    merged = {}
+    for doc in pg_results:
+        key = doc.get("chunk_text", "")[:100]  # Use first 100 chars as dedup key
+        if key not in merged:
+            merged[key] = doc
 
-    except Exception as e:
-        print(f"⚠️ RAG retrieval error: {e}")
-        return []
+    for doc in qdrant_results:
+        key = doc.get("chunk_text", "")[:100]
+        if key not in merged:
+            merged[key] = doc
+
+    # Sort by similarity as baseline
+    similarity_ranked = sorted(merged.values(), key=lambda x: x.get("similarity", 0), reverse=True)
+    
+    # Optional reranking: improve relevance using cross-encoder
+    final_results = _rerank_results(query, similarity_ranked, top_k)
+    
+    return final_results
 
 
 # ─── Persona-Aware Generation ─────────────────────────────────────────────────

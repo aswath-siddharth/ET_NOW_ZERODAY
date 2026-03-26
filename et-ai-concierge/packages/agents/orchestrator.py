@@ -39,6 +39,13 @@ from database import (
     save_chat_message, get_chat_history,
 )
 
+# ─── Setup sys.path for RAG ingestion imports ─────────────────────────────────
+import sys
+import os
+rag_path = os.path.join(os.path.dirname(__file__), "..", "rag", "ingestion")
+if rag_path not in sys.path:
+    sys.path.insert(0, rag_path)
+
 # ─── LLM Clients: OpenRouter StepFun (Primary) + Groq (Fallback) ──────────────────────
 
 # Initialize OpenRouter (Primary)
@@ -122,9 +129,32 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-async def startup():
+def startup():
     init_db()
-    print("🚀 ET AI Concierge API is running")
+    
+    # Initialize ET news collections and indices
+    try:
+        from ingest import init_et_news_collection, init_et_news_index
+        init_et_news_collection()
+        init_et_news_index()
+    except Exception as e:
+        print(f"[WARN] Failed to initialize ET news collections: {e}")
+    
+    # Initialize news scheduler for ET article scraping
+    try:
+        from news_scheduler import init_scheduler
+        scraper_enabled = os.getenv("ET_SCRAPER_ENABLED", "true").lower() == "true"
+        if scraper_enabled:
+            scraper_hour = int(os.getenv("ET_SCRAPER_SCHEDULE_HOUR", "20"))
+            scraper_minute = int(os.getenv("ET_SCRAPER_SCHEDULE_MINUTE", "0"))
+            init_scheduler(hour=scraper_hour, minute=scraper_minute)
+            print(f"[OK] News scheduler initialized (scrape at {scraper_hour:02d}:{scraper_minute:02d} IST)")
+        else:
+            print("[INFO] ET News Scraper disabled via configuration")
+    except Exception as e:
+        print(f"[WARN] Failed to initialize news scheduler: {e}")
+    
+    print("[OK] ET AI Concierge API is running")
 
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
@@ -1069,6 +1099,37 @@ class RegisterRequest(PydanticBaseModel):
 class VerifyRequest(PydanticBaseModel):
     email: str
     password: str
+
+
+# ─── Admin News Scraper Endpoints ────────────────────────────────────────────
+
+@app.post("/api/admin/scrape-now")
+async def trigger_manual_scrape(current_user: AuthUser = Depends(get_current_user)):
+    """
+    Manually trigger an ET news scrape job.
+    Requires authentication.
+    """
+    # Optional: Add admin role check here
+    try:
+        from news_scheduler import trigger_scrape_now
+        result = trigger_scrape_now()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to trigger scrape: {str(e)}")
+
+
+@app.get("/api/admin/scrape-status")
+async def get_scrape_status(current_user: AuthUser = Depends(get_current_user)):
+    """
+    Get status of the last ET news scrape.
+    Returns info about articles scraped, errors, timing, etc.
+    Requires authentication.
+    """
+    try:
+        from news_scheduler import get_scrape_status
+        return get_scrape_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get scrape status: {str(e)}")
 
 
 @app.post("/api/auth/register")

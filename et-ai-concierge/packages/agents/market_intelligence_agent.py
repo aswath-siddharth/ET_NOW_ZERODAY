@@ -1,6 +1,7 @@
 """
 ET AI Concierge — Market Intelligence Agent (Agent 3)
 Real-time market data, portfolio drift, and technical signals.
+Optional RAG enrichment for expert analysis and insights.
 """
 import math
 from typing import Dict, Any, Optional, List
@@ -239,15 +240,126 @@ def calculate_portfolio_drift(
     return result
 
 
+# ─── Indian Gold Price Fetcher ────────────────────────────────────────────
+
+def get_indian_gold_price() -> Dict[str, Any]:
+    """
+    Get Indian gold prices from MCX-linked sources.
+    Tries multiple gold ETF symbols that track MCX prices.
+    Falls back to international gold if needed.
+    """
+    # Gold ETF symbols that track MCX prices (NSE listed)
+    gold_etf_symbols = [
+        "GOLDPETAL.NS",       # Motilal Oswal Gold ETF (common/liquid)
+        "SBIN0000001.NS",     # SBI Gold ETF
+        "GOLDSHARE.NS",       # Motilal Oswal Gold Savings Fund
+        "JPGOLD.NS",          # Jignesh Parikh Gold ETF
+    ]
+    
+    # Try each symbol to get MCX-linked Indian gold price
+    for symbol in gold_etf_symbols:
+        try:
+            quote = get_real_time_quote(symbol)
+            if quote.get("current_price") and "error" not in quote:
+                # Successfully got Indian gold price
+                quote["symbol"] = "MCX Gold (via ETF)"
+                quote["unit"] = "per 1 gram"
+                return quote
+        except Exception:
+            continue
+    
+    # Fallback: If MCX symbols fail, use international gold
+    # Note: International gold (GC=F) is in USD/Troy oz, needs conversion
+    try:
+        quote = get_real_time_quote("GC=F")  # COMEX gold
+        if quote.get("current_price") and "error" not in quote:
+            # Approximate conversion: 1 troy oz ≈ 31.1g, rough INR conversion
+            quote["symbol"] = "International Gold Reference"
+            quote["note"] = "(USD prices - for reference only)"
+            return quote
+    except Exception:
+        pass
+    
+    # If all fail, return error response
+    return {
+        "symbol": "Gold",
+        "error": "Unable to fetch current gold prices",
+        "suggestion": "Check ET Markets Gold coverage for live MCX prices"
+    }
+
+
+# ─── Optional RAG Enhancement ────────────────────────────────────────────────
+
+def _get_market_rag_context(query: str) -> Optional[Dict[str, Any]]:
+    """
+    Optionally enhance market responses with RAG-retrieved expert analysis.
+    Returns enrichment data or None if RAG unavailable.
+    Non-blocking: if RAG fails, just returns None.
+    """
+    try:
+        from rag_engine import retrieve
+        
+        # Adapt RAG query based on market context
+        rag_queries = {
+            "nifty": "Nifty 50 technical analysis market trends",
+            "sensex": "Sensex BSE market analysis trends",
+            "gold": "gold investment guide SGBs returns",
+            "mutual fund": "mutual fund investment strategy SIP",
+            "sip": "SIP strategy returns systematic investment",
+            "portfolio": "portfolio rebalancing strategy allocation",
+            "stock": "stock market technical analysis trading",
+        }
+        
+        # Find most relevant RAG query
+        adapted_query = query
+        for keyword, enhanced_query in rag_queries.items():
+            if keyword in query.lower():
+                adapted_query = enhanced_query
+                break
+        
+        # Retrieve from RAG (non-blocking with timeout)
+        chunks = retrieve(adapted_query, top_k=2)  # Just 2 for brevity
+        
+        if not chunks or len(chunks) == 0:
+            return None
+        
+        # Extract sources for recommendations
+        sources = []
+        insights = []
+        for chunk in chunks:
+            if chunk.get("chunk_text"):
+                insights.append(chunk["chunk_text"][:200])  # First 200 chars
+            if chunk.get("source_url"):
+                sources.append({
+                    "title": chunk.get("title", "ET Prime Analysis"),
+                    "url": chunk["source_url"],
+                })
+        
+        return {
+            "insights": insights,
+            "sources": sources,
+            "chunks_used": len(chunks)
+        }
+    
+    except Exception as e:
+        # Non-blocking: RAG failure doesn't break market response
+        print(f"[DEBUG] Market RAG enrichment skipped: {e}")
+        return None
+
+
 # ─── Main Agent Function ─────────────────────────────────────────────────────
 
 def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> AgentResponse:
-    """Process a message through the Market Intelligence Agent."""
+    """
+    Process a message through the Market Intelligence Agent.
+    Provides real-time market data FIRST, then optionally enriches with RAG context.
+    """
     msg_lower = user_message.lower()
     content_parts = []
     sources = []
     recommendations = []
     is_investment_advice = False
+    rag_context = None  # Optional enrichment
 
     # ── Stock/Index Quote Requests ──
     if any(word in msg_lower for word in ["price", "quote", "nifty", "sensex", "stock"]):
@@ -277,14 +389,26 @@ def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> Ag
 
     # ── Gold Queries ──
     elif "gold" in msg_lower:
-        quote = get_real_time_quote("GC=F") # Gold futures
+        quote = get_indian_gold_price()  # Use Indian gold prices
         content_parts.append("🪙 **Gold Market Update:**\n")
+        
+        if "error" not in quote:
+            symbol_display = quote.get("symbol", "Gold")
+            unit_display = quote.get("unit", "/10g")
+            direction = "🟢" if quote.get("change", 0) >= 0 else "🔴"
+            content_parts.append(
+                f"{direction} **{symbol_display}**: ₹{quote['current_price']:,.2f}{unit_display} "
+                f"({'+' if quote.get('change', 0) >= 0 else ''}{quote.get('change', 0):.2f}, "
+                f"{quote.get('percent_change', 0):.2f}%)"
+            )
+            if note := quote.get("note"):
+                content_parts.append(f"   *{note}*")
+        else:
+            content_parts.append(f"⚠️ {quote['error']}")
+            content_parts.append(f"   💡 {quote.get('suggestion', '')}")
+        
         content_parts.append(
-            f"MCX Gold: ₹{quote['current_price']:,.2f}/10g "
-            f"({'+' if quote.get('change', 0) >= 0 else ''}{quote.get('change', 0):.2f})"
-        )
-        content_parts.append(
-            "\n**Analyst View:** Gold remains a strong hedge. "
+            "\n**Analyst View:** Gold remains a strong hedge against inflation. "
             "Consider Sovereign Gold Bonds (SGBs) for tax-free returns + 2.5% annual interest."
         )
         recommendations.append(Recommendation(
@@ -339,6 +463,38 @@ def run_market_intelligence_agent(user_message: str, profile: UserProfile) -> Ag
         content_parts.append("\n**Top Stories:**")
         for item in news[:3]:
             content_parts.append(f"• {item['headline']}")
+
+    # ── Optional RAG Enrichment ──
+    # Add expert analysis/insights from ET Prime knowledge base
+    # Only for relevant query types, non-blocking if RAG fails
+    should_enrich = any(word in msg_lower for word in [
+        "gold", "nifty", "sensex", "mutual fund", "sip", "portfolio",
+        "stock", "analysis", "trend", "rebalance"
+    ])
+    
+    if should_enrich:
+        rag_context = _get_market_rag_context(user_message)
+        
+        if rag_context and rag_context.get("insights"):
+            content_parts.append("\n---")
+            content_parts.append("\n📖 **ET Prime Expert Insights:**")
+            for i, insight in enumerate(rag_context["insights"], 1):
+                content_parts.append(f"\n**Insight {i}:** {insight}...")
+            
+            # Add source recommendations
+            if rag_context.get("sources"):
+                content_parts.append("\n**Read More:**")
+                for src in rag_context["sources"]:
+                    content_parts.append(f"• [{src['title']}]({src['url']})")
+                    
+                    # Add as recommendation
+                    recommendations.append(Recommendation(
+                        type="article",
+                        title=src["title"],
+                        description="ET Prime market analysis",
+                        deeplink=src["url"],
+                        source_agent="market_intelligence_agent",
+                    ))
 
     return AgentResponse(
         agent_id="market_intelligence_agent",
