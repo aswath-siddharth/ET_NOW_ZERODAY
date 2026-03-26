@@ -124,9 +124,9 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Database tables initialized successfully")
+        print("[OK] Database tables initialized successfully")
     except Exception as e:
-        print(f"⚠️ Database init skipped (not available): {e}")
+        print(f"[WARN] Database init skipped (not available): {e}")
 
 
 # ─── Password Hashing ─────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ def create_or_get_user(
         conn.close()
         return (dict(row) if row else None), True
     except Exception as e:
-        print(f"⚠️ Could not create_or_get_user: {e}")
+        print(f"[WARN] Could not create_or_get_user: {e}")
         return None, False
 
 
@@ -219,7 +219,7 @@ def verify_user_credentials(email: str, password: str) -> Optional[Dict[str, Any
                 pass
         return None
     except Exception as e:
-        print(f"⚠️ Could not verify credentials: {e}")
+        print(f"[WARN] Could not verify credentials: {e}")
         return None
 
 
@@ -257,7 +257,7 @@ def update_user_profile(user_id: str, profile_data: Dict[str, Any]):
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"⚠️ Could not update user profile: {e}")
+        print(f"[WARN] Could not update user profile: {e}")
 
 
 def get_user(user_id: str) -> Optional[Dict[str, Any]]:
@@ -316,7 +316,7 @@ def log_audit(
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"⚠️ Audit log failed: {e}")
+        print(f"[WARN] Audit log failed: {e}")
 
 
 # ─── Chat History ─────────────────────────────────────────────────────────────
@@ -341,7 +341,7 @@ def save_chat_message(
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"⚠️ Could not save chat message: {e}")
+        print(f"[WARN] Could not save chat message: {e}")
 
 
 def get_chat_history(
@@ -368,5 +368,5 @@ def get_chat_history(
         conn.close()
         return [dict(r) for r in rows]
     except Exception as e:
-        print(f"⚠️ Could not retrieve chat history: {e}")
+        print(f"[WARN] Could not retrieve chat history: {e}")
         return []

@@ -74,7 +74,7 @@ def _get_finnhub_news(query: str = "India stocks") -> List[Dict]:
             })
         return articles
     except Exception as e:
-        print(f"⚠️ Finnhub API error: {e}")
+        print(f"[WARN] Finnhub API error: {e}")
         return []
 
 
@@ -100,7 +100,7 @@ def _get_newsapi_news(query: str = "India stocks") -> List[Dict]:
             })
         return articles
     except Exception as e:
-        print(f"⚠️ NewsAPI error: {e}")
+        print(f"[WARN] NewsAPI error: {e}")
         return []
 
 
@@ -130,7 +130,7 @@ def _get_et_rss_news() -> List[Dict]:
         
         return articles
     except Exception as e:
-        print(f"⚠️ RSS feed error: {e}")
+        print(f"[WARN] RSS feed error: {e}")
         return []
 
 

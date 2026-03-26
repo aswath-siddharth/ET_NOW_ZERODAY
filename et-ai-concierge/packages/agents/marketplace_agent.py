@@ -24,6 +24,40 @@ class PrivacyFilter:
 privacy_filter = PrivacyFilter()
 
 
+# ─── Approval Probability Calculator ─────────────────────────────────────────
+
+def _calculate_approval_probability(user: UserProfile, offer: Dict[str, Any]) -> float:
+    """Calculate loan approval probability based on user profile and offer."""
+    base_prob = offer.get("approval_base_probability", 0.5)
+    
+    if not user:
+        return base_prob
+    
+    # Adjust based on user profile factors
+    prob = base_prob
+    
+    # Risk score decreases approval chances slightly
+    if user.risk_score:
+        prob *= (1 - (user.risk_score / 100) * 0.1)
+    
+    # Emergency fund indicates financial stability
+    if user.has_emergency_fund:
+        prob *= 1.1
+    
+    # Home ownership is positive indicator
+    if user.home_ownership == "owning":
+        prob *= 1.05
+    
+    # Employment type: salaried is better than self-employed
+    if user.income_type == "salaried":
+        prob *= 1.08
+    elif user.income_type == "business":
+        prob *= 0.95
+    
+    # Clamp between 0 and 1
+    return min(1.0, max(0.0, prob))
+
+
 # ─── EMI Calculator ──────────────────────────────────────────────────────────
 
 def calculate_emi(principal: float, annual_rate: float, tenure_months: int) -> Dict[str, Any]:

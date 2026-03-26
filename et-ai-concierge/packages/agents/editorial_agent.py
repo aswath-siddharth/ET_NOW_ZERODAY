@@ -28,7 +28,7 @@ def _search_with_rag(query: str, persona: Optional[str] = None) -> Dict[str, Any
         result = ask(query, persona=persona, top_k=3)
         return result
     except Exception as e:
-        print(f"⚠️ RAG search failed: {e}")
+        print(f"[WARN] RAG search failed: {e}")
         return None
 
 

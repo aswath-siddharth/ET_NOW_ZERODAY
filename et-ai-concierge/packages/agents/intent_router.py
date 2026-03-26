@@ -66,13 +66,13 @@ def detect_upsell_intent(query: str, profile: UserProfile) -> Dict[str, Any]:
             
             # Check for rate limit errors (429)
             if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
-                print(f"⚠️ Groq Rate Limit Exceeded in Intent Router: {type(e).__name__}")
+                print(f"[WARN] Groq Rate Limit Exceeded in Intent Router: {type(e).__name__}")
                 print("ℹ️ Using fallback routing due to rate limit")
             # Check for auth errors (401)
             elif "401" in error_str or "unauthorized" in error_str.lower():
-                print(f"⚠️ Groq Authentication Error in Intent Router: Invalid API key")
+                print(f"[WARN] Groq Authentication Error in Intent Router: Invalid API key")
             else:
-                print(f"⚠️ Intent Router (Groq) failed: {type(e).__name__}: {e}")
+                print(f"[WARN] Intent Router (Groq) failed: {type(e).__name__}: {e}")
             
             return fallback_response
 
@@ -109,6 +109,6 @@ def detect_upsell_intent(query: str, profile: UserProfile) -> Dict[str, Any]:
             if content:
                 return json.loads(content)
         except Exception as e:
-            print(f"⚠️ Intent Router (Ollama) failed: {e}")
+            print(f"[WARN] Intent Router (Ollama) failed: {e}")
             
     return fallback_response

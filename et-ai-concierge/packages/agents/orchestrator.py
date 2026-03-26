@@ -51,10 +51,10 @@ try:
     import redis as redis_lib
     redis_client = redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
     redis_client.ping()
-    print("✅ Redis connected")
+    print("[OK] Redis connected")
 except Exception:
     redis_client = None
-    print("⚠️ Redis not available, using in-memory session store")
+    print("[WARN] Redis not available, using in-memory session store")
 
 # ─── In-Memory Fallbacks ─────────────────────────────────────────────────────
 _sessions: Dict[str, SessionState] = {}
@@ -126,8 +126,7 @@ def _get_profile(user_id: str) -> UserProfile:
             _profiles[user_id] = profile
             return profile
     except Exception as e:
-        print(f"⚠️ Failed to load profile from database: {e}")
-    
+            print(f"[WARN] Failed to load profile from database: {e}")
     # Create new profile only if not in memory or database
     profile = UserProfile(id=user_id)
     _profiles[user_id] = profile
@@ -373,18 +372,18 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
         
         # Check for rate limit errors (429)
         if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
-            print(f"⚠️ Groq Rate Limit Exceeded: {e}")
-            print("ℹ️ Returning agent response without LLM synthesis due to rate limits")
+            print(f"[WARN] Groq Rate Limit Exceeded: {e}")
+            print("[INFO] Returning agent response without LLM synthesis due to rate limits")
             return agent_response.content
         
         # Check for auth errors (401)
         elif "401" in error_str or "unauthorized" in error_str.lower():
-            print(f"⚠️ Groq Authentication Error: {e}")
+            print(f"[WARN] Groq Authentication Error: {e}")
             return agent_response.content
         
         # Generic fallback
         else:
-            print(f"⚠️ LLM synthesis failed: {e}")
+            print(f"[WARN] LLM synthesis failed: {e}")
             return agent_response.content
 
 
