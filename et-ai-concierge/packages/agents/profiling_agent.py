@@ -110,7 +110,7 @@ def determine_persona(answers: Dict[str, Any]) -> PersonaType:
     from config import settings
     import json
     
-    # ── Try LLM First ──
+    # ── Try LLM: OpenRouter (Primary) + Groq (Fallback) ──
     system_prompt = '''You are an expert financial advisor. Analyze the user's profiling answers and assign EXACTLY ONE of the following personas. Respond ONLY with the persona exact name. Do not output anything else.
 Personas:
 - PERSONA_HOME_BUYER
@@ -123,7 +123,34 @@ Personas:
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
     persona_val = None
 
-    if settings.GROQ_API_KEY:
+    # Try OpenRouter (Primary)
+    if settings.OPENROUTER_API_KEY:
+        try:
+            import requests
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://et-ai-concierge.local",
+                "X-Title": "ET AI Concierge",
+            }
+            payload = {
+                "model": settings.OPENROUTER_MODEL,
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 32,
+                "reasoning": {"enabled": True}
+            }
+            response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"].strip().upper().replace(" ", "_").replace("-", "_")
+            if content and not content.startswith("PERSONA_"):
+                content = f"PERSONA_{content}"
+            persona_val = content
+        except Exception as e:
+            print(f"[WARN] OpenRouter determine_persona failed: {e}, trying Groq...")
+
+    # Fallback to Groq
+    if not persona_val and settings.GROQ_API_KEY:
         try:
             from groq import Groq
             client = Groq(api_key=settings.GROQ_API_KEY)
@@ -138,25 +165,7 @@ Personas:
                 content = f"PERSONA_{content}"
             persona_val = content
         except Exception as e:
-            print(f"⚠️ Groq determine_persona failed: {e}")
-
-    if not persona_val:
-        ollama_model = getattr(settings, "OLLAMA_MODEL", None)
-        if ollama_model:
-            try:
-                import requests
-                res = requests.post(
-                    "http://localhost:11434/api/chat",
-                    json={"model": ollama_model, "messages": messages, "stream": False},
-                    timeout=10,
-                ).json()
-                content = res.get("message", {}).get("content", "").strip().upper().replace(" ", "_").replace("-", "_")
-                if content:
-                    if not content.startswith("PERSONA_"):
-                        content = f"PERSONA_{content}"
-                    persona_val = content
-            except Exception as e:
-                print(f"⚠️ Ollama determine_persona failed: {e}")
+            print(f"[WARN] Groq determine_persona failed: {e}")
 
     if persona_val:
         valid_personas = [p.value for p in PersonaType]
@@ -399,56 +408,63 @@ def run_xray_step(
     messages = [{"role": "system", "content": sys_prompt}]
     messages.extend(conversation_history)
 
-    # Try Groq first
-    if not settings.GROQ_API_KEY:
-        print("⚠️ GROQ_API_KEY not set, skipping Groq")
-    else:
+    # Try OpenRouter (Primary)
+    if settings.OPENROUTER_API_KEY:
         try:
-            print(f"🔄 Attempting Groq X-Ray with model {settings.GROQ_MODEL}...")
+            print(f"[INFO] Attempting OpenRouter X-Ray with model {settings.OPENROUTER_MODEL}...")
+            import requests
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://et-ai-concierge.local",
+                "X-Title": "ET AI Concierge",
+            }
+            payload = {
+                "model": settings.OPENROUTER_MODEL,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 1024,
+                "reasoning": {"enabled": True}
+            }
+            response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+            print(f"[OK] OpenRouter X-Ray succeeded for question #{question_number + 1}")
+            return response.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[WARN] OpenRouter X-Ray failed: {type(e).__name__}, trying Groq...")
+
+    # Fallback to Groq
+    if settings.GROQ_API_KEY:
+        try:
+            print(f"[INFO] Attempting Groq X-Ray with model {settings.GROQ_MODEL}...")
             from groq import Groq
             client = Groq(api_key=settings.GROQ_API_KEY)
             response = client.chat.completions.create(
                 model=settings.GROQ_MODEL,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=512,
+                max_tokens=1024,
             )
-            print(f"✓ Groq X-Ray succeeded for question #{question_number + 1}")
+            print(f"[OK] Groq X-Ray succeeded for question #{question_number + 1}")
             return response.choices[0].message.content
         except ImportError as e:
-            print(f"⚠️ Groq package not installed: {e}")
+            print(f"[WARN] Groq package not installed: {e}")
         except Exception as e:
             error_str = str(e)
             
             # Check for rate limit errors (429)
             if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
-                print(f"⚠️ Groq Rate Limit Exceeded: {type(e).__name__}")
-                print("ℹ️ Falling back to static questions due to Groq rate limit")
+                print(f"[WARN] Groq Rate Limit Exceeded: {type(e).__name__}")
+                print("[INFO] Falling back to static questions due to Groq rate limit")
             # Check for auth errors (401)
             elif "401" in error_str or "unauthorized" in error_str.lower():
-                print(f"⚠️ Groq Authentication Error: Invalid API key")
+                print(f"[WARN] Groq Authentication Error: Invalid API key")
             else:
-                print(f"⚠️ Groq X-Ray failed: {type(e).__name__}: {e}")
-
-    # Try local Ollama
-    ollama_model = getattr(settings, "OLLAMA_MODEL", None)
-    if ollama_model:
-        try:
-            import requests
-            res = requests.post(
-                "http://localhost:11434/api/chat",
-                json={"model": ollama_model, "messages": messages, "stream": False},
-                timeout=20,
-            ).json()
-            content = res.get("message", {}).get("content", "")
-            if content:
-                return content
-        except Exception as e:
-            print(f"⚠️ Ollama X-Ray failed: {e}")
+                print(f"[WARN] Groq X-Ray failed: {type(e).__name__}: {e}")
 
     # Fallback to static questions
     if question_number < len(XRAY_FALLBACK_QUESTIONS):
-        print(f"📋 Using fallback question #{question_number + 1}")
+        print(f"[INFO] Using fallback question #{question_number + 1}")
         return XRAY_FALLBACK_QUESTIONS[question_number]
 
     # Extract answers from conversation_history for fallback

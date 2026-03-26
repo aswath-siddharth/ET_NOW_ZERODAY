@@ -9,7 +9,11 @@ load_dotenv()
 
 
 class Settings:
-    # ── LLM (Groq) ──────────────────────────────
+    # ── LLM (OpenRouter StepFun Primary, Groq Fallback) ─────
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_MODEL: str = "stepfun/step-3.5-flash:free"
+    OPENROUTER_URL: str = "https://openrouter.ai/api/v1/chat/completions"
+    
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 

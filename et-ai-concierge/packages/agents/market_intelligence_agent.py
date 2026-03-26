@@ -26,7 +26,7 @@ except ImportError:
 # ─── Live Data Fetchers ────────────────────────────────────────────────────────
 
 import yfinance as yf
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 def get_real_time_quote(symbol: str) -> Dict[str, Any]:
     """Get real-time stock quote from Yahoo Finance."""
@@ -35,7 +35,7 @@ def get_real_time_quote(symbol: str) -> Dict[str, Any]:
         ticker = yf.Ticker(ns_symbol)
         data = ticker.history(period="1d")
         if data.empty:
-            return {"symbol": symbol, "error": f"Symbol {symbol} not found."}
+            return {"symbol": symbol, "error": f"Symbol {symbol} may be delisted or invalid.", "status": "not_found"}
             
         current_price = data['Close'].iloc[-1]
         prev_close = ticker.info.get('previousClose', current_price)
@@ -66,12 +66,21 @@ def _get_finnhub_news(query: str = "India stocks") -> List[Dict]:
         # Finnhub returns news for specific companies, use general search
         news_data = client.general_news("general", min_id=0)
         articles = []
-        for item in news_data.get("data", [])[:5]:
-            articles.append({
-                "headline": item.get("headline", ""),
-                "url": item.get("url", ""),
-                "source": "Finnhub"
-            })
+        
+        # Handle both dict and list responses
+        data_items = []
+        if isinstance(news_data, dict):
+            data_items = news_data.get("data", [])
+        elif isinstance(news_data, list):
+            data_items = news_data
+        
+        for item in data_items[:5]:
+            if isinstance(item, dict):
+                articles.append({
+                    "headline": item.get("headline", ""),
+                    "url": item.get("url", ""),
+                    "source": "Finnhub"
+                })
         return articles
     except Exception as e:
         print(f"[WARN] Finnhub API error: {e}")

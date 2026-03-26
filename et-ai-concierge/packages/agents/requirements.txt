@@ -8,11 +8,12 @@ mem0ai
 redis
 psycopg2-binary
 groq
+requests
 edge-tts
 finnhub-python
 newsapi
 feedparser
-duckduckgo-search
+ddgs
 yfinance
 langsmith
 sentry-sdk

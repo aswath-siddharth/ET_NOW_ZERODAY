@@ -84,7 +84,7 @@ def calculate_emi(principal: float, annual_rate: float, tenure_months: int) -> D
 
 # ─── Loan Rate Comparison ────────────────────────────────────────────────────
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 def get_live_rates(product: str) -> List[Dict[str, Any]]:
     """Fetch live rates using web search to avoid mock data."""

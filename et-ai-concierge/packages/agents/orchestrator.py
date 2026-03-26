@@ -39,12 +39,29 @@ from database import (
     save_chat_message, get_chat_history,
 )
 
-# ─── Optional: Groq LLM ──────────────────────────────────────────────────────
+# ─── LLM Clients: OpenRouter StepFun (Primary) + Groq (Fallback) ──────────────────────
+
+# Initialize OpenRouter (Primary)
+import requests
+openrouter_available = False
+if settings.OPENROUTER_API_KEY:
+    openrouter_available = True
+    print("[OK] OpenRouter LLM initialized (stepfun/step-3.5-flash:free)")
+else:
+    print("[WARN] OPENROUTER_API_KEY not set, OpenRouter unavailable")
+
+# Initialize Groq (Fallback)
+groq_client = None
 try:
     from groq import Groq
     groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+    if groq_client:
+        print("[OK] Groq LLM available as fallback (llama-3.1-70b-versatile)")
 except ImportError:
+    print("[WARN] groq library not installed")
+except Exception:
     groq_client = None
+    print("[WARN] Groq not available, will use OpenRouter only")
 
 # ─── Optional: Redis ──────────────────────────────────────────────────────────
 try:
@@ -122,6 +139,9 @@ def _get_profile(user_id: str) -> UserProfile:
     try:
         db_user = get_user(user_id)
         if db_user:
+            # Convert UUID to string if necessary
+            if 'id' in db_user and hasattr(db_user['id'], '__str__'):
+                db_user['id'] = str(db_user['id'])
             profile = UserProfile(**db_user)
             _profiles[user_id] = profile
             return profile
@@ -223,8 +243,9 @@ def route_to_agent(message: str, intent: IntentType, profile: UserProfile) -> st
 
 
 def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, user_message: str, upsell_data: str = None) -> str:
-    """Use Groq LLM to add a conversational wrapper around the agent response."""
-    if not groq_client:
+    """Use OpenRouter LLM (primary) + Groq (fallback) to synthesize response."""
+    # If neither client available, return raw agent response
+    if not openrouter_available and groq_client is None:
         return agent_response.content
 
     # Reference mapping for common ET resources (helps LLM format links correctly)
@@ -355,45 +376,114 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
                 f"Partner Data:\n{upsell_data}"
             )
 
-        response = groq_client.chat.completions.create(
-            model=settings.GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": f"Here's the data from our systems:\n{agent_response.content}"},
-                {"role": "user", "content": synthesis_instruction},
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-        )
-        return response.choices[0].message.content
+        # ──── TRY OPENROUTER (PRIMARY) ────
+        if openrouter_available:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://et-ai-concierge.local",
+                    "X-Title": "ET AI Concierge",
+                }
+                payload = {
+                    "model": settings.OPENROUTER_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": f"Here's the data from our systems:\n{agent_response.content}"},
+                        {"role": "user", "content": synthesis_instruction},
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 4096,
+                    "reasoning": {"enabled": True}
+                }
+                response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
+                response.raise_for_status()
+                response_data = response.json()
+                message_data = response_data["choices"][0]["message"]
+                return message_data.get("content", "")
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
+                    print(f"[WARN] OpenRouter Rate Limit: {e}, falling back to Groq")
+                elif "401" in error_str or "unauthorized" in error_str.lower() or "unauthenticated" in error_str.lower():
+                    print(f"[WARN] OpenRouter Auth Error: {e}, falling back to Groq")
+                else:
+                    print(f"[WARN] OpenRouter synthesis failed: {e}, falling back to Groq")
+
+        # ──── FALLBACK TO GROQ ────
+        if groq_client:
+            try:
+                response = groq_client.chat.completions.create(
+                    model=settings.GROQ_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": f"Here's the data from our systems:\n{agent_response.content}"},
+                        {"role": "user", "content": synthesis_instruction},
+                    ],
+                    temperature=0.7,
+                    max_tokens=4096,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
+                    print(f"[WARN] Groq Rate Limit: {e}")
+                elif "401" in error_str or "unauthorized" in error_str.lower():
+                    print(f"[WARN] Groq Auth Error: {e}")
+                else:
+                    print(f"[WARN] Groq synthesis failed: {e}")
+        
+        # Return raw response if both fail
+        return agent_response.content
+        
     except Exception as e:
-        error_str = str(e)
-        
-        # Check for rate limit errors (429)
-        if "429" in error_str or "rate_limit" in error_str.lower() or "quota" in error_str.lower():
-            print(f"[WARN] Groq Rate Limit Exceeded: {e}")
-            print("[INFO] Returning agent response without LLM synthesis due to rate limits")
-            return agent_response.content
-        
-        # Check for auth errors (401)
-        elif "401" in error_str or "unauthorized" in error_str.lower():
-            print(f"[WARN] Groq Authentication Error: {e}")
-            return agent_response.content
-        
-        # Generic fallback
-        else:
-            print(f"[WARN] LLM synthesis failed: {e}")
-            return agent_response.content
+        print(f"[WARN] LLM synthesis fallback error: {e}")
+        return agent_response.content
 
 
 # ─── API Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health_check():
+    openrouter_status = "ok"
+    openrouter_message = ""
     groq_status = "ok"
     groq_message = ""
     
+    # Check OpenRouter (Primary)
+    if openrouter_available:
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": settings.OPENROUTER_MODEL,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 10,
+            }
+            response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=10)
+            response.raise_for_status()
+            openrouter_status = "ok"
+            openrouter_message = "OpenRouter (stepfun/step-3.5-flash:free) is operational (PRIMARY)"
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate_limit" in error_str.lower():
+                openrouter_status = "rate_limited"
+                openrouter_message = "OpenRouter Rate Limit - will use Groq fallback"
+            elif "401" in error_str or "unauthorized" in error_str.lower():
+                openrouter_status = "auth_error"
+                openrouter_message = "OpenRouter Auth Failed - Check API key"
+            else:
+                openrouter_status = "error"
+                openrouter_message = f"OpenRouter Error: {type(e).__name__}"
+    else:
+        openrouter_status = "unavailable"
+        openrouter_message = "OpenRouter API key not configured"
+    
+    # Check Groq (Fallback)
     if groq_client:
         try:
             # Quick test to verify Groq is accessible
@@ -404,24 +494,30 @@ def health_check():
                 max_tokens=10,
             )
             groq_status = "ok"
-            groq_message = "Groq API is operational"
+            groq_message = "Groq (llama-3.1-70b-versatile) is operational (FALLBACK)"
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "rate_limit" in error_str.lower():
                 groq_status = "rate_limited"
-                groq_message = "Groq Rate Limit Exceeded - API calls will use fallbacks"
+                groq_message = "Groq Rate Limit - both LLMs limited"
             elif "401" in error_str:
                 groq_status = "auth_error"
-                groq_message = "Groq Authentication Failed - Check API key"
+                groq_message = "Groq Authentication Failed"
             else:
                 groq_status = "error"
                 groq_message = f"Groq Error: {type(e).__name__}"
+    else:
+        groq_status = "unavailable"
+        groq_message = "Groq API key not configured"
     
     return {
         "status": "ok",
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "services": {
             "redis": redis_client is not None,
+            "openrouter_llm": openrouter_available,
+            "openrouter_status": openrouter_status,
+            "openrouter_message": openrouter_message,
             "groq_llm": groq_client is not None,
             "groq_status": groq_status,
             "groq_message": groq_message,
@@ -518,12 +614,17 @@ async def chat(request: ChatRequest, auth_user: AuthUser = Depends(get_current_u
     upsell_data = None
     if upsell_intent.get("trigger_active") and upsell_intent.get("trigger_type"):
         trigger_type = upsell_intent["trigger_type"]
+        print(f"[OK] Upsell trigger detected: {trigger_type}")
         if trigger_type == "tax_marketplace":
             mock_data = fetch_mock_elss_funds()
             upsell_data = f"Top ELSS Funds: {json.dumps(mock_data)}"
+            print(f"[OK] Upsell data prepared for tax_marketplace")
         elif trigger_type == "insurance_marketplace":
             mock_data = fetch_mock_insurance_quotes()
             upsell_data = f"Top Insurance Quotes: {json.dumps(mock_data)}"
+            print(f"[OK] Upsell data prepared for insurance_marketplace")
+    else:
+        print(f"[INFO] No upsell trigger: trigger_active={upsell_intent.get('trigger_active')}, trigger_type={upsell_intent.get('trigger_type')}")
 
     # Check behavioral triggers
     behavioral_response = run_behavioral_monitor(user_id, request.message)

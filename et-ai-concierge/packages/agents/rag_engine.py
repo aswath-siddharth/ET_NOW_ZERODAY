@@ -202,7 +202,37 @@ def generate_answer(
         for c in chunks
     ]
 
-    # Try Groq LLM
+    # Try OpenRouter LLM (Primary)
+    if settings.OPENROUTER_API_KEY:
+        try:
+            import requests
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://et-ai-concierge.local",
+                "X-Title": "ET AI Concierge",
+            }
+            payload = {
+                "model": settings.OPENROUTER_MODEL,
+                "messages": messages,
+                "temperature": 0.5,
+                "max_tokens": 2048,
+                "reasoning": {"enabled": True}
+            }
+            response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
+            if response.status_code == 405:
+                print(f"[WARN] OpenRouter 405 error - trying Groq...")
+            else:
+                response.raise_for_status()
+                return {
+                    "answer": response.json()["choices"][0]["message"]["content"],
+                    "sources": sources,
+                    "chunks_used": len(chunks),
+                }
+        except Exception as e:
+            print(f"[WARN] OpenRouter RAG generation failed: {e}, trying Groq...")
+
+    # Fallback to Groq LLM
     if settings.GROQ_API_KEY:
         try:
             from groq import Groq
@@ -219,33 +249,13 @@ def generate_answer(
                 "chunks_used": len(chunks),
             }
         except Exception as e:
-            print(f"⚠️ Groq RAG generation failed: {e}")
-
-    # Try local Ollama
-    ollama_model = getattr(settings, "OLLAMA_MODEL", None)
-    if ollama_model:
-        try:
-            import requests
-            res = requests.post(
-                "http://localhost:11434/api/chat",
-                json={"model": ollama_model, "messages": messages, "stream": False},
-                timeout=30,
-            ).json()
-            content = res.get("message", {}).get("content", "")
-            if content:
-                return {
-                    "answer": content,
-                    "sources": sources,
-                    "chunks_used": len(chunks),
-                }
-        except Exception as e:
-            print(f"⚠️ Ollama RAG generation failed: {e}")
+            print(f"[WARN] Groq RAG generation failed: {e}")
 
     # Fallback: return raw chunks as formatted text
     fallback_parts = ["Based on our knowledge base, here's what I found:\n"]
     for i, chunk in enumerate(chunks, 1):
         fallback_parts.append(f"**{chunk['title']}**\n{chunk['chunk_text'][:300]}...\n")
-    fallback_parts.append("\n*For a more detailed, personalized answer, please configure an LLM (Groq API key or local Ollama).*")
+    fallback_parts.append("\n*For a more detailed, personalized answer, please configure either OpenRouter API key or Groq API key.*")
 
     return {
         "answer": "\n".join(fallback_parts),
