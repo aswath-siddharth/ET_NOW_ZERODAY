@@ -973,6 +973,66 @@ async def chat_history(session_id: Optional[str] = None, limit: int = 50, auth_u
     return {"messages": messages, "count": len(messages)}
 
 
+# ─── Voice Briefing Endpoint ──────────────────────────────────────────────────
+
+@app.get("/api/voice-briefing")
+async def voice_briefing(auth_user: AuthUser = Depends(get_current_user)):
+    """
+    Generate a personalized voice briefing:
+    1. Retrieve user's recent chat interests
+    2. Fetch live market data via RAG
+    3. Generate conversational script via stepfun/step-3.5-flash
+    4. Synthesize audio via Google Cloud TTS
+    5. Return MP3 audio stream
+    """
+    user_id = auth_user.user_id
+    
+    try:
+        from voice_briefing import generate_voice_briefing, get_graceful_decline_message, synthesize_audio_dummy
+        
+        # Generate audio (GCP TTS primary, edge-tts fallback)
+        audio_data = await generate_voice_briefing(user_id)
+        
+        if audio_data:
+            # Return streaming MP3 response
+            return StreamingResponse(
+                iter([audio_data]),
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Disposition": f"inline; filename=briefing_{user_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                },
+            )
+        else:
+            # Graceful degradation: return dummy audio fallback
+            fallback_audio = synthesize_audio_dummy()
+            
+            if fallback_audio:
+                return StreamingResponse(
+                    iter([fallback_audio]),
+                    media_type="audio/mpeg",
+                    headers={"Cache-Control": "no-cache, must-revalidate"},
+                )
+            else:
+                return JSONResponse(
+                    {
+                        "error": "Voice briefing service unavailable",
+                        "message": "Please try again later or visit ET Markets for updates",
+                    },
+                    status_code=503,
+                )
+    
+    except Exception as e:
+        print(f"[ERROR] Voice briefing endpoint error: {e}", exc_info=True)
+        return JSONResponse(
+            {
+                "error": "Internal server error",
+                "message": "Failed to generate voice briefing",
+            },
+            status_code=500,
+        )
+
+
 # ─── Behavioral Tracking Endpoints ───────────────────────────────────────────
 
 @app.post("/api/track/paywall")

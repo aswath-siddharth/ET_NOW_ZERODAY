@@ -10,6 +10,7 @@ psycopg2-binary
 groq
 requests
 edge-tts
+google-cloud-texttospeech>=2.14.0
 finnhub-python
 newsapi
 feedparser

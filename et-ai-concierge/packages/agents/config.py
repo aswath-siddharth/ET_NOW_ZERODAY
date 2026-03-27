@@ -53,6 +53,14 @@ class Settings:
 
     # ── Voice ────────────────────────────────────
     EDGE_TTS_VOICE: str = "en-IN-NeerjaNeural"
+    
+    # ── Google Cloud Text-to-Speech ─────────────
+    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
+    GCP_CREDENTIALS_JSON: str = os.getenv("GCP_CREDENTIALS_JSON", "")  # JSON content as string
+    GCP_CREDENTIALS_PATH: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")  # File path (legacy)
+    GCP_TTS_VOICE_NAME: str = os.getenv("GCP_TTS_VOICE_NAME", "en-IN-Standard-A")
+    GCP_TTS_LANGUAGE_CODE: str = "en-IN"
+    GCP_TTS_AUDIO_ENCODING: str = "MP3"
 
     # ── Embedding Model ──────────────────────────────────────
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

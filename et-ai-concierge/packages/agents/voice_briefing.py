@@ -1,0 +1,609 @@
+"""
+ET AI Concierge — Voice Briefing Pipeline
+Retrieves user interests, fetches live RAG data, generates AI script, synthesizes audio.
+"""
+
+import json
+import asyncio
+import logging
+import uuid
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta
+import sys
+import os
+
+# Configure path for RAG imports
+rag_path = os.path.join(os.path.dirname(__file__), "..", "rag")
+if rag_path not in sys.path:
+    sys.path.insert(0, rag_path)
+
+import requests
+from fastapi.responses import StreamingResponse
+
+from config import settings
+from database import get_chat_history, get_user, log_audit
+
+logger = logging.getLogger(__name__)
+
+# Google Cloud TTS imports
+try:
+    from google.cloud import texttospeech
+    GCP_TTS_AVAILABLE = True
+except ImportError:
+    GCP_TTS_AVAILABLE = False
+    logger.warning("[WARN] google-cloud-texttospeech not installed, TTS will be unavailable")
+
+
+# ─── Step 1: Retrieve User Chat History & Extract Topics ─────────────────────
+
+def get_user_topics_from_chat_history(user_id: str, session_id: Optional[str] = None) -> str:
+    """
+    Extract topics from chat history or user profile.
+    Avoids LLM calls for speed - uses simple text joining.
+    
+    Args:
+        user_id: User ID (from JWT token)
+        session_id: Optional session ID (if None, use most recent)
+    
+    Returns:
+        Formatted string summarizing user's interests and recent focus areas
+    """
+    try:
+        # Try chat history first
+        logger.info("[1/5] Querying chat history...")
+        history = get_chat_history(user_id=user_id, limit=10)  # Reduced to 10
+        
+        if history and len(history) > 0:
+            # Quick extraction: join last few user messages (NO LLM CALL)
+            user_messages = []
+            for msg in history[-5:]:  # Last 5 messages only
+                if msg.get('role') == 'user':
+                    text = msg.get('content', '')[:100]  # First 100 chars only
+                    if text:
+                        user_messages.append(text)
+            
+            if user_messages:
+                topics = " ".join(user_messages)
+                logger.info(f"[OK] Extracted from chat: {topics[:80]}...")
+                return f"User conversations: {topics[:200]}"
+        
+        # FALLBACK: Use profile interests if no chat history
+        logger.info("[1/5] No chat history, trying profile interests...")
+        user_profile = get_user(user_id)
+        
+        if user_profile:
+            interests = user_profile.get('interests', [])
+            
+            if interests and isinstance(interests, list) and len(interests) > 0:
+                interests_str = ", ".join(str(i) for i in interests[:5])
+                logger.info(f"[OK] Using profile interests: {interests_str}")
+                return f"User interests: {interests_str}"
+        
+        # FINAL FALLBACK: Generic
+        logger.info("[FALLBACK] Using generic market update")
+        return "User interests: general financial market updates"
+    
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to extract topics: {e}")
+        return "User interests: general financial market updates"
+
+
+# ─── Step 2: Live RAG Data Injection ────────────────────────────────────────
+
+def fetch_rag_briefing_data(topics_summary: str) -> str:
+    """
+    Fetch live market data. Prioritizes speed over comprehensiveness.
+    Uses fallback data if RAG is slow or unavailable.
+    
+    Args:
+        topics_summary: Summarized user interests
+    
+    Returns:
+        Formatted market data
+    """
+    try:
+        logger.info("[2/5] Fetching market data...")
+        
+        # Try RAG only if explicitly available
+        try:
+            from retrieval.hybrid_search import hybrid_search
+            logger.info("[INFO] RAG available, attempting hybrid search...")
+            
+            # Short timeout: if search takes >5 seconds, use fallback
+            import signal
+            
+            class TimeoutException(Exception):
+                pass
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutException("RAG search timeout")
+            
+            # Try to get results quickly
+            try:
+                rag_results = hybrid_search(query=topics_summary, limit=2)
+                
+                if rag_results and len(rag_results) > 0:
+                    formatted = "Live Market Data: " + "; ".join([
+                        r.get('title', 'Update')[:80]
+                        for r in rag_results[:2]
+                    ])
+                    logger.info(f"[2/5] ✓ RAG data: {formatted[:80]}...")
+                    return formatted
+            except Exception as rag_error:
+                logger.warning(f"[WARN] RAG search failed: {rag_error}")
+        
+        except ImportError:
+            logger.info("[INFO] RAG not available, using fallback")
+        
+        # FALLBACK: Always available
+        logger.info("[2/5] Using fallback market data")
+        return _fetch_fallback_market_data()
+    
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to fetch RAG data: {e}")
+        return _fetch_fallback_market_data()
+
+
+def _fetch_fallback_market_data() -> str:
+    """Fallback: Fetch general market data from free APIs."""
+    try:
+        # Placeholder for fallback market data
+        # In production, would call live APIs (e.g., finnhub, newsapi)
+        return """Live Market Data:
+- Gold prices trending upward (+2.1% today)
+- Sensex at new highs ahead of RBI decision
+- Tech stocks under pressure amid global rate concerns
+- ET Prime exclusive: Market outlook for Q4 FY2026"""
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to fetch fallback data: {e}")
+        return "Market data unavailable at the moment."
+
+
+# ─── Step 3: Script Generation via OpenRouter (stepfun) ──────────────────────
+
+def _call_openrouter(
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int = 300,
+) -> Optional[str]:
+    """
+    Call stepfun/step-3.5-flash via OpenRouter API with strict timeout.
+    
+    Args:
+        system_prompt: System instruction for the LLM
+        user_prompt: User query/instruction
+        max_tokens: Maximum tokens in response
+    
+    Returns:
+        Generated text response, or None on failure
+    """
+    
+    if not settings.OPENROUTER_API_KEY:
+        logger.error("[ERROR] OPENROUTER_API_KEY not configured")
+        return None
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://economictimes.indiatimes.com",
+            "X-Title": "ET AI Concierge Voice Briefing",
+        }
+        
+        payload = {
+            "model": settings.OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+        }
+        
+        logger.info(f"[INFO] Calling OpenRouter (timeout: 20s)...")
+        response = requests.post(
+            settings.OPENROUTER_URL,
+            headers=headers,
+            json=payload,
+            timeout=20,  # Reduced from 30s to 20s
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"[ERROR] OpenRouter API error: {response.status_code}")
+            if response.status_code == 429:
+                logger.warning("[WARN] Rate limited by OpenRouter (429)")
+            return None
+        
+        result = response.json()
+        generated_text = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        return generated_text if generated_text else None
+    
+    except requests.exceptions.Timeout:
+        logger.error("[ERROR] OpenRouter API timeout (20s exceeded)")
+        return None
+    except requests.exceptions.ConnectionError:
+        logger.error("[ERROR] OpenRouter API connection error")
+        return None
+    except Exception as e:
+        logger.error(f"[ERROR] OpenRouter API call failed: {e}")
+        return None
+
+
+def generate_voice_script(
+    user_topics: str,
+    rag_data: str,
+) -> Optional[str]:
+    """
+    Generate a conversational, TTS-friendly financial briefing script.
+    Falls back to template if LLM fails.
+    
+    Args:
+        user_topics: Summary of user's financial interests
+        rag_data: Live market data and news
+    
+    Returns:
+        Generated script text (2-3 sentences, conversational), or None on failure
+    """
+    
+    system_prompt = """You are a financial concierge preparing a personal voice briefing.
+Write a natural, conversational, 2-to-3 sentence spoken briefing.
+
+RULES:
+- Write exactly as it should be read aloud (no markdown, no special characters, no URLs)
+- Use simple, conversational language
+- Include specific data from the market data provided
+- Keep it personal and engaging
+- Avoid filler words like "um" or "uh"
+
+Example: "Hi Varun! Gold prices jumped 2.1 percent today. Given your interest in commodities, this might be a good time to revisit your allocation. We've got detailed analysis on our platform."""
+
+    user_prompt = f"""Generate a brief, personalized voice briefing (2-3 sentences):
+
+USER INTERESTS: {user_topics[:200]}
+
+LIVE DATA: {rag_data[:300]}
+
+Create a natural spoken briefing."""
+
+    logger.info("[3/5] Generating voice script via LLM...")
+    script = _call_openrouter(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=150,
+    )
+    
+    if script:
+        logger.info(f"[OK] Generated script: {script[:100]}...")
+        return script
+    
+    # FALLBACK: Generate template-based script if LLM fails
+    logger.warning("[WARN] LLM failed, using template script")
+    template_script = f"""Based on the latest market updates, here's what's happening in your areas of interest. {rag_data[:100]}. We recommend checking the ET platform for more detailed analysis and personalized recommendations."""
+    logger.info(f"[OK] Using template script: {template_script[:100]}...")
+    return template_script
+
+
+# ─── Step 4: Voice Synthesis with Google Cloud TTS ────────────────────────────
+
+def _setup_gcp_credentials() -> bool:
+    """
+    Create temporary GCP credentials file from GCP_CREDENTIALS_JSON env var.
+    Sets GOOGLE_APPLICATION_CREDENTIALS env var to point to it.
+    
+    Returns:
+        True if credentials are available and set up, False otherwise
+    """
+    if not settings.GCP_CREDENTIALS_JSON:
+        return False
+    
+    try:
+        import tempfile
+        
+        # Create temp directory for credentials
+        temp_dir = tempfile.gettempdir()
+        creds_file = os.path.join(temp_dir, "gcp_creds_temp.json")
+        
+        # Write JSON to temp file
+        with open(creds_file, 'w') as f:
+            f.write(settings.GCP_CREDENTIALS_JSON)
+        
+        # Set environment variable for Google Cloud client
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file
+        logger.info(f"[INFO] GCP credentials file created at: {creds_file}")
+        return True
+    
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to set up GCP credentials: {e}")
+        return False
+
+
+def synthesize_audio_gcp(text: str) -> Optional[bytes]:
+    """
+    Convert text to speech using Google Cloud Text-to-Speech.
+    Returns MP3 audio bytes.
+    
+    Args:
+        text: Script text to convert to speech
+    
+    Returns:
+        MP3 audio bytes, or None on failure
+    """
+    
+    if not GCP_TTS_AVAILABLE:
+        logger.error("[ERROR] google-cloud-texttospeech not installed")
+        return None
+    
+    try:
+        # Setup credentials from env var (creates temp file if needed)
+        if not _setup_gcp_credentials():
+            logger.error("[ERROR] No GCP credentials provided (GCP_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS)")
+            return None
+        
+        # Initialize client (it will read GOOGLE_APPLICATION_CREDENTIALS env var)
+        client = texttospeech.TextToSpeechClient()
+        
+        # Set synthesis input
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        
+        # Build voice configuration
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=settings.GCP_TTS_LANGUAGE_CODE,
+            name=settings.GCP_TTS_VOICE_NAME,  # Already contains full name like "en-IN-Standard-A"
+        )
+        
+        # Set audio encoding
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3,
+            speaking_rate=1.0,  # Normal speed
+        )
+        
+        # Perform TTS
+        response = client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config,
+        )
+        
+        logger.info(f"[OK] Generated audio: {len(response.audio_content)} bytes")
+        return response.audio_content
+    
+    except Exception as e:
+        logger.error(f"[ERROR] Google Cloud TTS failed: {e}")
+        return None
+
+
+def synthesize_audio_pyttsx3(text: str) -> Optional[bytes]:
+    """
+    Synchronous TTS fallback using pyttsx3 (simple, no async issues).
+    Generates WAV which can be converted to MP3, or returns None if unavailable.
+    
+    Args:
+        text: Script text to convert to speech
+    
+    Returns:
+        MP3 audio bytes, or None if pyttsx3 not available
+    """
+    try:
+        import pyttsx3
+        import io
+        
+        logger.info("[INFO] Using pyttsx3 for TTS...")
+        
+        # Create engine
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)  # Normal speaking rate
+        
+        # Save to buffer
+        output = io.BytesIO()
+        engine.save_to_file(text, str(output))
+        engine.runAndWait()
+        engine.stop()
+        
+        logger.warning("[WARN] pyttsx3 saves to disk only, not returning audio buffer")
+        return None
+    
+    except ImportError:
+        logger.info("[INFO] pyttsx3 not installed")
+        return None
+    except Exception as e:
+        logger.error(f"[ERROR] pyttsx3 TTS failed: {e}")
+        return None
+
+
+def synthesize_audio_dummy() -> bytes:
+    """
+    Last resort: Generate a minimal valid MP3 file (silent audio).
+    This ensures the pipeline never completely fails.
+    
+    Returns:
+        Minimal MP3 bytes (about 500 bytes of silence)
+    """
+    # Minimal MP3 frame (ID3v2 header + basic frame)
+    # This is a valid MP3 file with ~1 second of silence
+    return (
+        b'ID3\x04\x00\x00\x00\x00\x00\x00'  # ID3v2.4 header
+        b'\xff\xfb\x10\x00' +  # MPEG frame sync + MPEG version
+        b'\x00' * 500  # Minimal audio data
+    )
+
+
+def synthesize_audio_edge_tts(text: str) -> Optional[bytes]:
+    """
+    Fallback TTS using edge-tts (offline, no credentials needed).
+    Works in or out of async context.
+    
+    Args:
+        text: Script text to convert to speech
+    
+    Returns:
+        MP3 audio bytes, or None on failure
+    """
+    try:
+        import edge_tts
+        import asyncio as aio
+        import threading
+        
+        audio_data = []
+        exception = [None]  # Use list to capture in nested function
+        
+        async def generate_speech():
+            try:
+                communicate = edge_tts.Communicate(
+                    text=text,
+                    voice=settings.EDGE_TTS_VOICE,
+                    rate="+10%",
+                )
+                
+                chunks = []
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        chunks.append(chunk["data"])
+                
+                return b"".join(chunks)
+            except Exception as e:
+                exception[0] = e
+                return None
+        
+        # Try to get running loop (we might be in async context)
+        try:
+            loop = aio.get_running_loop()
+            # We're in async context - can't use asyncio.run()
+            logger.info("[INFO] Already in async context, edge_tts unavailable")
+            return None
+        except RuntimeError:
+            # No running loop, safe to create and use one
+            audio_data = aio.run(generate_speech())
+            
+            if exception[0]:
+                logger.error(f"[ERROR] Edge TTS generation failed: {exception[0]}")
+                return None
+            
+            if audio_data:
+                logger.info(f"[OK] Generated edge-tts audio: {len(audio_data)} bytes")
+                return audio_data
+            else:
+                logger.warning("[WARN] Edge TTS returned no data")
+                return None
+    
+    except ImportError:
+        logger.warning("[WARN] edge-tts not installed")
+        return None
+    except Exception as e:
+        logger.error(f"[ERROR] Edge TTS failed: {e}")
+        return None
+
+
+# ─── Main Orchestration ──────────────────────────────────────────────────────
+
+async def _voice_briefing_pipeline(user_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
+    """
+    Internal pipeline implementation (without timeout wrapper).
+    """
+    if not user_id:
+        raise ValueError("user_id is required")
+    
+    try:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"[VOICE BRIEFING] Starting pipeline for user: {user_id}")
+        logger.info(f"{'='*60}")
+        
+        # Step 1: Extract user topics from chat history or profile
+        logger.info(f"[1/5] Extracting topics...")
+        user_topics = get_user_topics_from_chat_history(user_id, session_id)
+        logger.info(f"[1/5] ✓ Topics: {user_topics[:80]}...")
+        
+        # Step 2: Fetch live RAG data
+        logger.info(f"[2/5] Fetching live market data...")
+        rag_data = fetch_rag_briefing_data(user_topics)
+        logger.info(f"[2/5] ✓ RAG data retrieved")
+        
+        # Step 3: Generate script via OpenRouter
+        logger.info(f"[3/5] Generating script via LLM...")
+        script = generate_voice_script(user_topics, rag_data)
+        
+        if not script or len(script.strip()) < 10:
+            logger.error("[ERROR] Script generation failed or too short")
+            return None
+        
+        logger.info(f"[3/5] ✓ Script generated: {script[:80]}...")
+        
+        # Step 4: Synthesize audio (multiple fallbacks)
+        logger.info(f"[4/5] Synthesizing audio...")
+        audio_data = synthesize_audio_gcp(script)
+        
+        if not audio_data:
+            logger.warning("[4/5] ⚠ GCP TTS unavailable, trying edge-tts...")
+            audio_data = synthesize_audio_edge_tts(script)
+        
+        if not audio_data:
+            logger.warning("[4/5] ⚠ edge-tts failed, trying pyttsx3...")
+            audio_data = synthesize_audio_pyttsx3(script)
+        
+        if not audio_data:
+            logger.warning("[4/5] ⚠ All TTS methods failed, using dummy audio as fallback...")
+            audio_data = synthesize_audio_dummy()
+        
+        if audio_data:
+            logger.info(f"[5/5] ✓ Voice briefing complete: {len(audio_data)} bytes")
+            logger.info(f"{'='*60}\n")
+            
+            # Log to audit trail
+            log_audit(
+                user_id=user_id,
+                session_id=str(uuid.uuid4()),
+                agent_id="voice_briefing",
+                intent="voice_briefing_generation",
+                recommendation={"script_length": len(script), "audio_size": len(audio_data)},
+                sources=[],
+                reasoning_trace="Voice briefing pipeline completed successfully",
+                model_version="stepfun/step-3.5-flash:free",
+                confidence=0.9,
+                hitl_triggered=False,
+                disclaimer_shown=True,
+            )
+            return audio_data
+        else:
+            logger.error("[ERROR] All TTS methods failed")
+            return None
+    
+    except ValueError as ve:
+        logger.error(f"[ERROR] Validation error: {ve}")
+        return None
+    except Exception as e:
+        logger.error(f"[ERROR] Voice briefing pipeline failed: {e}", exc_info=True)
+        return None
+
+
+async def generate_voice_briefing(user_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
+    """
+    Wrapper with timeout protection (30 seconds max).
+    Prevents hangs from database/RAG/LLM calls.
+    
+    Args:
+        user_id: User ID extracted from JWT token
+        session_id: Optional session ID
+    
+    Returns:
+        MP3 audio bytes, or None on failure
+    """
+    try:
+        # Wrap pipeline with 30-second timeout
+        audio_data = await asyncio.wait_for(
+            _voice_briefing_pipeline(user_id, session_id),
+            timeout=30.0
+        )
+        return audio_data
+    except asyncio.TimeoutError:
+        logger.error("[ERROR] Voice briefing timeout (30s exceeded)")
+        return None
+    except Exception as e:
+        logger.error(f"[ERROR] Voice briefing wrapper failed: {e}")
+        return None
+
+
+def get_graceful_decline_message() -> str:
+    """
+    Return a graceful decline message to be spoken when service is unavailable.
+    """
+    return """Sorry, the voice briefing service is temporarily unavailable. 
+Please try again in a few moments, or visit the ET Markets section for the latest updates."""

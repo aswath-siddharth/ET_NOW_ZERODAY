@@ -11,6 +11,7 @@ import {
 import { ArrowUpRight, TrendingUp, Newspaper, Shield, CreditCard, ChevronRight, TrendingDown, Zap, BarChart3, Briefcase, Building2, Home, Calculator, MapPin, Smartphone, LogOut } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { VoiceBriefingButton } from "@/components/VoiceBriefingButton";
 
 // Mock Data
 const NIFTY_DATA = [
@@ -141,24 +142,27 @@ export default function DashboardPage() {
               Your persona: <span className="text-red-700 font-medium px-2 py-0.5 rounded-full bg-red-50 text-sm">{personaName}</span>
             </p>
           </div>
-          <div className="flex gap-3">
-            <Link href="/">
-              <Button variant="outline" className="rounded-xl px-6 shadow-sm border-border/50 hover:bg-secondary">
-                <Home className="mr-2 w-4 h-4" />
-                Home
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-3">
+              <Link href="/">
+                <Button variant="outline" className="rounded-xl px-6 shadow-sm border-border/50 hover:bg-secondary">
+                  <Home className="mr-2 w-4 h-4" />
+                  Home
+                </Button>
+              </Link>
+              <Link href="/onboarding">
+                <Button className="rounded-xl px-6 shadow-lg bg-red-600 hover:bg-red-700 text-white">
+                  Financial X-Ray <ArrowUpRight className="ml-2 w-4 h-4" />
+                </Button>
+              </Link>
+              <Button 
+                onClick={handleSignOut}
+                className="rounded-xl px-6 shadow-lg bg-zinc-700 hover:bg-zinc-800 text-white"
+              >
+                Sign Out <LogOut className="ml-2 w-4 h-4" />
               </Button>
-            </Link>
-            <Link href="/onboarding">
-              <Button className="rounded-xl px-6 shadow-lg bg-red-600 hover:bg-red-700 text-white">
-                Financial X-Ray <ArrowUpRight className="ml-2 w-4 h-4" />
-              </Button>
-            </Link>
-            <Button 
-              onClick={handleSignOut}
-              className="rounded-xl px-6 shadow-lg bg-zinc-700 hover:bg-zinc-800 text-white"
-            >
-              Sign Out <LogOut className="ml-2 w-4 h-4" />
-            </Button>
+            </div>
+            <VoiceBriefingButton className="rounded-xl px-6 shadow-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white w-full" />
           </div>
         </header>
 
