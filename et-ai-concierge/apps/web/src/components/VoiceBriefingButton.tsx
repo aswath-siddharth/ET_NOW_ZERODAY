@@ -19,7 +19,7 @@ export function VoiceBriefingButton({ className }: VoiceBriefingButtonProps) {
     setError(null);
 
     try {
-      // Call the Next.js proxy endpoint
+      // Call the Next.js proxy endpoint with streaming
       const response = await fetch("/api/voice-briefing", {
         method: "GET",
         headers: {
@@ -34,37 +34,77 @@ export function VoiceBriefingButton({ className }: VoiceBriefingButtonProps) {
         );
       }
 
-      // Convert response to blob
-      const audioBlob = await response.blob();
-      console.log(`[INFO] Received audio blob: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
-
-      // Create object URL and play
-      const audioUrl = URL.createObjectURL(audioBlob);
-      console.log(`[INFO] Created audio URL: ${audioUrl}`);
-      
-      if (audioRef.current) {
-        audioRef.current.src = audioUrl;
-        console.log("[INFO] Set audio src, attempting to play...");
-        const playPromise = audioRef.current.play();
-        
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              console.log("[OK] Audio is playing");
-              setIsPlaying(true);
-            })
-            .catch((err) => {
-              console.error("[ERROR] Playback failed:", err);
-              setError(`Playback error: ${err.message}`);
-            });
-        }
+      if (!response.body) {
+        throw new Error("No response body for audio stream");
       }
+
+      // Stream audio chunks and play as soon as enough data arrives
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      let hasStartedPlayback = false;
+      const PLAYBACK_THRESHOLD = 50 * 1024; // Start playback after 50KB
+
+      console.log("[INFO] Starting audio stream...");
+
+      // Read and buffer chunks
+      const readLoop = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            console.log(`[INFO] Stream complete: ${totalBytes} bytes received`);
+            break;
+          }
+
+          chunks.push(value);
+          totalBytes += value.length;
+          console.log(`[INFO] Received chunk: +${value.length} bytes (total: ${totalBytes})`);
+
+          // Start playback once we have enough buffered (50KB)
+          if (!hasStartedPlayback && totalBytes >= PLAYBACK_THRESHOLD) {
+            hasStartedPlayback = true;
+            console.log(`[INFO] Sufficient buffer (${totalBytes}B), starting playback...`);
+
+            // Create blob and start playback - do this ONCE only
+            const audioBlob = new Blob(chunks, { type: "audio/mpeg" });
+            const audioUrl = URL.createObjectURL(audioBlob);
+
+            if (audioRef.current) {
+              audioRef.current.src = audioUrl;
+              audioRef.current.load(); // Force reload to enable streaming
+              
+              const playPromise = audioRef.current.play();
+
+              if (playPromise !== undefined) {
+                playPromise
+                  .then(() => {
+                    console.log("[OK] Audio playback started (streaming)");
+                    setIsPlaying(true);
+                  })
+                  .catch((err) => {
+                    console.error("[ERROR] Playback failed:", err.message);
+                    setError(`Playback error: ${err.message}`);
+                  });
+              }
+            }
+          }
+        }
+      };
+
+      // Run read loop without awaiting immediately (let it continue in background)
+      readLoop().catch((err) => {
+        console.error("[ERROR] Stream reading error:", err);
+        if (!hasStartedPlayback) {
+          setError("Failed to receive audio stream");
+        }
+      });
+
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      console.error("Voice briefing error:", message);
+      console.error("[ERROR] Voice briefing error:", message);
       setError(message);
 
-      // Show error toast/notification
       if (typeof window !== "undefined" && "alert" in window) {
         alert(`Voice briefing failed: ${message}`);
       }

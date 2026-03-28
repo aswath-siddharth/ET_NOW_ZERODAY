@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    // Call backend voice-briefing endpoint
+    // Call backend voice-briefing endpoint with streaming
     const response = await fetch(`${BACKEND_URL}/api/voice-briefing`, {
       method: "GET",
       headers,
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     if (!response.ok) {
       console.error(`Backend returned ${response.status}`);
       
-      // Return error as JSON, not audio
+      // Return error as JSON
       if (response.status === 503) {
         return NextResponse.json(
           { 
@@ -50,17 +50,23 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Get audio as buffer
-    const audioBuffer = await response.arrayBuffer();
-    
-    // Stream back as MP3
-    return new NextResponse(audioBuffer, {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Content-Length": audioBuffer.byteLength.toString(),
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-      },
-    });
+    // Forward the streaming response directly (don't buffer with arrayBuffer)
+    // This allows chunks to arrive progressively at the frontend
+    if (response.body) {
+      return new NextResponse(response.body, {
+        status: 200,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Transfer-Encoding": "chunked", // Enable chunked transfer for streaming
+        },
+      });
+    } else {
+      return NextResponse.json(
+        { error: "No response body from backend" },
+        { status: 500 }
+      );
+    }
   } catch (error) {
     console.error("Voice briefing proxy error:", error);
     return NextResponse.json(
