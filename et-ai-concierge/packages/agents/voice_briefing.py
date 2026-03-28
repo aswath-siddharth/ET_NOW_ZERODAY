@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Google Cloud TTS imports
 try:
     from google.cloud import texttospeech
+    from google.oauth2.service_account import Credentials
     GCP_TTS_AVAILABLE = True
 except ImportError:
     GCP_TTS_AVAILABLE = False
@@ -92,8 +93,8 @@ def get_user_topics_from_chat_history(user_id: str, session_id: Optional[str] = 
 
 def fetch_rag_briefing_data(topics_summary: str) -> str:
     """
-    Fetch live market data. Prioritizes speed over comprehensiveness.
-    Uses fallback data if RAG is slow or unavailable.
+    Fetch live market data via RAG hybrid search.
+    Falls back to static data if RAG unavailable.
     
     Args:
         topics_summary: Summarized user interests
@@ -102,45 +103,29 @@ def fetch_rag_briefing_data(topics_summary: str) -> str:
         Formatted market data
     """
     try:
-        logger.info("[2/5] Fetching market data...")
+        logger.info("[2/5] Fetching market data via RAG...")
         
-        # Try RAG only if explicitly available
-        try:
-            from retrieval.hybrid_search import hybrid_search
-            logger.info("[INFO] RAG available, attempting hybrid search...")
-            
-            # Short timeout: if search takes >5 seconds, use fallback
-            import signal
-            
-            class TimeoutException(Exception):
-                pass
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutException("RAG search timeout")
-            
-            # Try to get results quickly
-            try:
-                rag_results = hybrid_search(query=topics_summary, limit=2)
-                
-                if rag_results and len(rag_results) > 0:
-                    formatted = "Live Market Data: " + "; ".join([
-                        r.get('title', 'Update')[:80]
-                        for r in rag_results[:2]
-                    ])
-                    logger.info(f"[2/5] ✓ RAG data: {formatted[:80]}...")
-                    return formatted
-            except Exception as rag_error:
-                logger.warning(f"[WARN] RAG search failed: {rag_error}")
+        from retrieval.hybrid_search import hybrid_search
         
-        except ImportError:
-            logger.info("[INFO] RAG not available, using fallback")
+        # Query hybrid search (vector + lexical)
+        rag_results = hybrid_search(query=topics_summary, limit=2)
         
-        # FALLBACK: Always available
-        logger.info("[2/5] Using fallback market data")
-        return _fetch_fallback_market_data()
+        if rag_results and len(rag_results) > 0:
+            formatted = "Live Market Data: " + "; ".join([
+                r.get('title', 'Update')[:80]
+                for r in rag_results[:2]
+            ])
+            logger.info(f"[2/5] OK - RAG returned {len(rag_results)} results")
+            return formatted
+        else:
+            logger.warning(f"[WARN] RAG returned 0 results for query: {topics_summary[:50]}")
+            return _fetch_fallback_market_data()
     
+    except ImportError:
+        logger.info("[INFO] Retrieval module not available, using fallback")
+        return _fetch_fallback_market_data()
     except Exception as e:
-        logger.error(f"[ERROR] Failed to fetch RAG data: {e}")
+        logger.warning(f"[WARN] RAG search failed: {e}, using fallback")
         return _fetch_fallback_market_data()
 
 
@@ -164,7 +149,7 @@ def _fetch_fallback_market_data() -> str:
 def _call_openrouter(
     system_prompt: str,
     user_prompt: str,
-    max_tokens: int = 300,
+    max_tokens: int = 1500,  # Increased to 1500 to allow room for reasoning + actual content
 ) -> Optional[str]:
     """
     Call stepfun/step-3.5-flash via OpenRouter API with strict timeout.
@@ -208,15 +193,48 @@ def _call_openrouter(
             timeout=20,  # Reduced from 30s to 20s
         )
         
+        logger.info(f"[INFO] OpenRouter response status: {response.status_code}")
+        logger.debug(f"[DEBUG] OpenRouter response headers: {dict(response.headers)}")
+        logger.debug(f"[DEBUG] OpenRouter response body: {response.text[:500]}")
+        
         if response.status_code != 200:
             logger.error(f"[ERROR] OpenRouter API error: {response.status_code}")
+            logger.error(f"[ERROR] Response body: {response.text}")
             if response.status_code == 429:
                 logger.warning("[WARN] Rate limited by OpenRouter (429)")
             return None
         
         result = response.json()
-        generated_text = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        return generated_text if generated_text else None
+        logger.debug(f"[DEBUG] OpenRouter response finish_reason: {result.get('choices', [{}])[0].get('finish_reason', 'unknown')}")
+        
+        # Parse OpenRouter response (handle None values safely)
+        generated_text = None
+        try:
+            if "choices" in result and len(result["choices"]) > 0:
+                choice = result["choices"][0]
+                message = choice.get("message", {})
+                
+                # Only use content field for voice briefing (not reasoning - that's model's internal thinking)
+                content = message.get("content")
+                if content and isinstance(content, str):
+                    generated_text = content.strip()
+                
+                # Fallback to text field if available
+                if not generated_text and "text" in choice:
+                    text = choice.get("text")
+                    if text and isinstance(text, str):
+                        generated_text = text.strip()
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.error(f"[ERROR] Failed to parse OpenRouter response: {e}")
+        
+        if not generated_text:
+            finish_reason = result.get('choices', [{}])[0].get('finish_reason', 'unknown')
+            logger.error(f"[ERROR] OpenRouter returned empty content. Finish reason: {finish_reason}")
+            logger.error(f"[ERROR] Model may need more tokens (finish_reason=length means it ran out of tokens)")
+            return None
+        
+        logger.info(f"[OK] OpenRouter generated {len(generated_text)} chars")
+        return generated_text
     
     except requests.exceptions.Timeout:
         logger.error("[ERROR] OpenRouter API timeout (20s exceeded)")
@@ -245,31 +263,21 @@ def generate_voice_script(
         Generated script text (2-3 sentences, conversational), or None on failure
     """
     
-    system_prompt = """You are a financial concierge preparing a personal voice briefing.
-Write a natural, conversational, 2-to-3 sentence spoken briefing.
+    system_prompt = """You are a financial concierge. Generate a natural, spoken briefing (2-3 sentences).
+Rules: Conversational tone, simple language, specific data, no markdown, ready to read aloud."""
 
-RULES:
-- Write exactly as it should be read aloud (no markdown, no special characters, no URLs)
-- Use simple, conversational language
-- Include specific data from the market data provided
-- Keep it personal and engaging
-- Avoid filler words like "um" or "uh"
+    user_prompt = f"""Create a voice briefing for these interests and market data:
 
-Example: "Hi Varun! Gold prices jumped 2.1 percent today. Given your interest in commodities, this might be a good time to revisit your allocation. We've got detailed analysis on our platform."""
+INTERESTS: {user_topics[:150]}
+DATA: {rag_data[:200]}
 
-    user_prompt = f"""Generate a brief, personalized voice briefing (2-3 sentences):
-
-USER INTERESTS: {user_topics[:200]}
-
-LIVE DATA: {rag_data[:300]}
-
-Create a natural spoken briefing."""
+Output the 2-3 sentence briefing directly (nothing else)."""
 
     logger.info("[3/5] Generating voice script via LLM...")
     script = _call_openrouter(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        max_tokens=150,
+        # Don't override max_tokens - use the 1500 default
     )
     
     if script:
@@ -285,36 +293,33 @@ Create a natural spoken briefing."""
 
 # ─── Step 4: Voice Synthesis with Google Cloud TTS ────────────────────────────
 
-def _setup_gcp_credentials() -> bool:
+def _get_gcp_credentials() -> Optional[Credentials]:
     """
-    Create temporary GCP credentials file from GCP_CREDENTIALS_JSON env var.
-    Sets GOOGLE_APPLICATION_CREDENTIALS env var to point to it.
+    Parse GCP credentials from GCP_CREDENTIALS_JSON env var.
+    Returns a Credentials object, or None if not available.
     
     Returns:
-        True if credentials are available and set up, False otherwise
+        google.oauth2.service_account.Credentials or None
     """
     if not settings.GCP_CREDENTIALS_JSON:
-        return False
+        logger.error("[ERROR] GCP_CREDENTIALS_JSON not set")
+        return None
     
     try:
-        import tempfile
+        # Parse JSON string to dict
+        credentials_dict = json.loads(settings.GCP_CREDENTIALS_JSON)
         
-        # Create temp directory for credentials
-        temp_dir = tempfile.gettempdir()
-        creds_file = os.path.join(temp_dir, "gcp_creds_temp.json")
-        
-        # Write JSON to temp file
-        with open(creds_file, 'w') as f:
-            f.write(settings.GCP_CREDENTIALS_JSON)
-        
-        # Set environment variable for Google Cloud client
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file
-        logger.info(f"[INFO] GCP credentials file created at: {creds_file}")
-        return True
+        # Create credentials object from service account info
+        credentials = Credentials.from_service_account_info(credentials_dict)
+        logger.info("[OK] GCP credentials loaded from GCP_CREDENTIALS_JSON")
+        return credentials
     
+    except json.JSONDecodeError as e:
+        logger.error(f"[ERROR] Failed to parse GCP_CREDENTIALS_JSON as JSON: {e}")
+        return None
     except Exception as e:
-        logger.error(f"[ERROR] Failed to set up GCP credentials: {e}")
-        return False
+        logger.error(f"[ERROR] Failed to create GCP credentials object: {e}")
+        return None
 
 
 def synthesize_audio_gcp(text: str) -> Optional[bytes]:
@@ -334,13 +339,14 @@ def synthesize_audio_gcp(text: str) -> Optional[bytes]:
         return None
     
     try:
-        # Setup credentials from env var (creates temp file if needed)
-        if not _setup_gcp_credentials():
-            logger.error("[ERROR] No GCP credentials provided (GCP_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS)")
+        # Get credentials from env var (no file writes - secure!)
+        credentials = _get_gcp_credentials()
+        if not credentials:
+            logger.error("[ERROR] No GCP credentials available")
             return None
         
-        # Initialize client (it will read GOOGLE_APPLICATION_CREDENTIALS env var)
-        client = texttospeech.TextToSpeechClient()
+        # Initialize client with credentials object directly
+        client = texttospeech.TextToSpeechClient(credentials=credentials)
         
         # Set synthesis input
         synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -348,13 +354,13 @@ def synthesize_audio_gcp(text: str) -> Optional[bytes]:
         # Build voice configuration
         voice = texttospeech.VoiceSelectionParams(
             language_code=settings.GCP_TTS_LANGUAGE_CODE,
-            name=settings.GCP_TTS_VOICE_NAME,  # Already contains full name like "en-IN-Standard-A"
+            name=settings.GCP_TTS_VOICE_NAME,
         )
         
         # Set audio encoding
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
-            speaking_rate=1.0,  # Normal speed
+            speaking_rate=1.0,
         )
         
         # Perform TTS

@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "agents"))
 from config import settings
 
 
-QDRANT_COLLECTION = "et_prime_articles"
+QDRANT_COLLECTION = "et_news_articles"
 ES_INDEX = "et_prime_articles"
 
 
@@ -41,23 +41,28 @@ def vector_search(
     if QdrantClient is None or embedding_model is None:
         return []
 
-    client = QdrantClient(url=settings.QDRANT_URL)
-    query_vector = embedding_model.encode(query, normalize_embeddings=True).tolist()
-
-    # Build filter
-    qdrant_filter = None
-    if sector_filter:
-        qdrant_filter = Filter(must=[
-            FieldCondition(key="sector", match=MatchAny(any=sector_filter))
-        ])
-
     try:
-        results = client.search(
+        client = QdrantClient(url=settings.QDRANT_URL)
+        query_vector = embedding_model.encode(query, normalize_embeddings=True).tolist()
+
+        # Build filter
+        qdrant_filter = None
+        if sector_filter:
+            qdrant_filter = Filter(must=[
+                FieldCondition(key="sector", match=MatchAny(any=sector_filter))
+            ])
+
+        # query_points() returns a QueryResponse object with .points attribute
+        query_response = client.query_points(
             collection_name=QDRANT_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             query_filter=qdrant_filter,
         )
+        
+        # Extract points from the response
+        results = query_response.points if hasattr(query_response, 'points') else []
+        
         return [
             {
                 "id": str(r.id),
@@ -72,7 +77,7 @@ def vector_search(
             for r in results
         ]
     except Exception as e:
-        print(f"⚠️ Qdrant search failed: {e}")
+        print(f"[WARN] Qdrant search failed: {e}")
         return []
 
 

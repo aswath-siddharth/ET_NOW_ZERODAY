@@ -30,5 +30,5 @@ lxml
 python-dateutil==2.8.2
 pytz
 qdrant-client
-elasticsearch
+elasticsearch>=8,<9
 
