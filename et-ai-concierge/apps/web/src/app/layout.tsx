@@ -1,18 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-import { cn } from "@/lib/utils";
 import { Providers } from "@/components/providers";
 import { FloatingConcierge } from "@/components/FloatingConcierge";
-
-const fontSans = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
+import { Navbar } from "@/components/Navbar";
 
 export const metadata: Metadata = {
   title: "ET AI Concierge | Your Financial Life Navigator",
-  description: "Navigate wealth creation with the intelligence of The Economic Times.",
+  description:
+    "Navigate wealth creation with the intelligence of The Economic Times. AI-powered financial concierge with personalized insights, market intelligence, and smart recommendations.",
 };
 
 export default function RootLayout({
@@ -21,16 +16,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body
-        className={cn(
-          "min-h-screen bg-background font-sans antialiased text-foreground selection:bg-primary selection:text-primary-foreground",
-          fontSans.variable
-        )}
-      >
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen bg-background font-sans antialiased text-foreground noise-overlay">
         <Providers>
-          <div className="relative flex min-h-screen flex-col bg-[url('/bg-grid.svg')] bg-cover">
-            {children}
+          <div className="mesh-gradient" aria-hidden="true" />
+          <div className="relative flex min-h-screen flex-col">
+            <Navbar />
+            <main className="flex-1">{children}</main>
             <FloatingConcierge />
           </div>
         </Providers>
@@ -38,4 +30,3 @@ export default function RootLayout({
     </html>
   );
 }
-

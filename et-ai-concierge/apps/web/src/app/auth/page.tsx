@@ -5,15 +5,18 @@ import { signIn } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Sparkles, Mail, Lock, ArrowRight, User, Eye, EyeOff, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
 export default function AuthPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      }
+    >
       <AuthForm />
     </Suspense>
   );
@@ -38,9 +41,8 @@ function AuthForm() {
 
     try {
       let isNewUser = false;
-      
+
       if (isSignUp) {
-        // Register first
         const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -56,7 +58,6 @@ function AuthForm() {
         isNewUser = registerData.is_new || false;
       }
 
-      // Sign in with NextAuth
       const result = await signIn("credentials", {
         email,
         password,
@@ -64,9 +65,12 @@ function AuthForm() {
       });
 
       if (result?.error) {
-        setError(isSignUp ? "Account created but login failed. Try signing in." : "Invalid email or password");
+        setError(
+          isSignUp
+            ? "Account created but login failed. Try signing in."
+            : "Invalid email or password"
+        );
       } else {
-        // Route new users to onboarding, existing users to their original destination
         const redirectUrl = isNewUser ? "/onboarding" : callbackUrl;
         window.location.href = redirectUrl;
       }
@@ -78,28 +82,25 @@ function AuthForm() {
   };
 
   const handleGoogle = () => {
-    console.log("🔵 Google sign-in clicked");
     try {
-      // For Google OAuth, let NextAuth handle the full redirect flow
-      // After successful auth, the middleware will check onboarding status
-      signIn("google", { 
+      signIn("google", {
         redirectTo: callbackUrl,
-        redirect: true 
-      }).catch((err) => {
-        console.error("❌ Google sign-in error:", err);
+        redirect: true,
+      }).catch(() => {
         setError("Google sign-in failed. Please try again.");
       });
-    } catch (err) {
-      console.error("❌ Google sign-in exception:", err);
+    } catch {
       setError("Something went wrong with Google sign-in.");
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
-      {/* Background glow */}
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[400px] bg-primary/15 blur-[140px] rounded-full pointer-events-none" />
-      <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-orange-500/10 blur-[100px] rounded-full pointer-events-none" />
+    <div className="min-h-screen flex items-center justify-center p-6 pt-24 relative overflow-hidden">
+      {/* Background accents */}
+      <div
+        className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[400px] rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(ellipse, rgba(212,168,83,0.08) 0%, transparent 70%)" }}
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -109,19 +110,23 @@ function AuthForm() {
       >
         {/* Logo */}
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-primary/30">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center font-bold text-primary-foreground text-sm shadow-lg"
+            style={{ boxShadow: "0 4px 20px rgba(212,168,83,0.25)" }}
+          >
             ET
           </div>
-          <span className="font-semibold text-xl tracking-tight">AI Concierge</span>
+          <span className="font-semibold text-xl tracking-tight text-foreground">
+            AI Concierge
+          </span>
         </div>
 
-        <Card className="p-8 bg-card/60 backdrop-blur-xl border-border/40 shadow-2xl shadow-black/20">
+        <div className="p-8 rounded-2xl glass-card border border-border/50 shadow-2xl">
           {/* Header */}
           <div className="text-center mb-8">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <Sparkles className="w-6 h-6 text-primary" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
               {isSignUp ? "Create Account" : "Welcome Back"}
             </h1>
             <p className="text-sm text-muted-foreground mt-2">
@@ -132,13 +137,12 @@ function AuthForm() {
           </div>
 
           {/* Google OAuth */}
-          <Button
+          <button
             type="button"
-            variant="outline"
-            className="w-full h-12 rounded-xl mb-6 text-sm font-medium border-border/60 hover:bg-secondary/80 hover:border-primary/30 transition-all duration-200"
             onClick={handleGoogle}
+            className="w-full h-12 rounded-xl mb-6 text-sm font-medium border border-border/60 hover:bg-accent hover:border-primary/20 transition-all duration-200 flex items-center justify-center gap-3 text-foreground"
           >
-            <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
                 fill="#4285F4"
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
@@ -157,7 +161,7 @@ function AuthForm() {
               />
             </svg>
             Continue with Google
-          </Button>
+          </button>
 
           {/* Divider */}
           <div className="relative mb-6">
@@ -173,45 +177,49 @@ function AuthForm() {
           <form onSubmit={handleCredentials} className="space-y-4">
             {isSignUp && (
               <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
+                <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
                   type="text"
                   placeholder="Full name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="h-12 pl-10 rounded-xl bg-secondary/30 border-border/50"
+                  className="w-full h-12 pl-11 pr-4 rounded-xl bg-secondary/50 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition"
                 />
               </div>
             )}
 
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
+              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
                 type="email"
                 placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-12 pl-10 rounded-xl bg-secondary/30 border-border/50"
+                className="w-full h-12 pl-11 pr-4 rounded-xl bg-secondary/50 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition"
                 required
               />
             </div>
 
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-12 pl-10 pr-10 rounded-xl bg-secondary/30 border-border/50"
+                className="w-full h-12 pl-11 pr-11 rounded-xl bg-secondary/50 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition"
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition"
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition"
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
               </button>
             </div>
 
@@ -221,23 +229,24 @@ function AuthForm() {
               </p>
             )}
 
-            <Button
+            <button
               type="submit"
-              className="w-full h-12 rounded-xl text-sm font-medium shadow-lg shadow-primary/20 group"
               disabled={loading}
+              className="w-full h-12 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 transition flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ boxShadow: "0 4px 20px rgba(212,168,83,0.2)" }}
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               ) : (
                 <>
                   {isSignUp ? "Create Account" : "Sign In"}
-                  <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </>
               )}
-            </Button>
+            </button>
           </form>
 
-          {/* Toggle Sign Up / Sign In */}
+          {/* Toggle */}
           <p className="text-center text-sm text-muted-foreground mt-6">
             {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
             <button
@@ -251,9 +260,8 @@ function AuthForm() {
               {isSignUp ? "Sign in" : "Sign up"}
             </button>
           </p>
-        </Card>
+        </div>
 
-        {/* Footer */}
         <p className="text-center text-xs text-muted-foreground mt-6">
           By continuing, you agree to ET&apos;s Terms of Service and Privacy Policy.
         </p>

@@ -748,102 +748,115 @@ async def resume_session(modality: str = "web", auth_user: AuthUser = Depends(ge
     }
 
 
-# ─── Onboarding Endpoints ────────────────────────────────────────────────────
+# ─── Onboarding Endpoints (Deterministic Flow) ───────────────────────────────
+
+# In-memory store for onboarding answers per user
+_onboarding_answers: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/api/onboarding/start")
 async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
-    """Start the onboarding flow using Financial X-Ray."""
+    """Start the onboarding flow. Returns greeting + first question instantly."""
     user_id = auth_user.user_id
-    
-    _xray_conversations[user_id] = []
-    _xray_question_count[user_id] = 0
-    
-    first_q = run_xray_step([], 0)
-    greeting = XRAY_WARM_OPEN + "\n\n" + first_q
-    _xray_conversations[user_id].append({"role": "assistant", "content": greeting})
-    
-    opts = PROFILING_QUESTIONS[0].get("options", []) if len(PROFILING_QUESTIONS) > 0 else []
 
-    return OnboardingResponse(
-        question=greeting,
-        options=opts,
-        step=0,
-        is_complete=False,
-    ).model_dump()
-
-@app.post("/api/onboarding/answer")
-async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = Depends(get_current_user)):
-    """Submit an onboarding answer using Financial X-Ray."""
-    user_id = auth_user.user_id
-    
-    if user_id not in _xray_conversations:
-        _xray_conversations[user_id] = []
-        _xray_question_count[user_id] = 0
-        
-    conv = _xray_conversations[user_id]
-    q_num = _xray_question_count.get(user_id, 0)
-    
-    conv.append({"role": "user", "content": request.answer})
-    q_num += 1
-    _xray_question_count[user_id] = q_num
-    
-    next_response = run_xray_step(conv, q_num)
-    conv.append({"role": "assistant", "content": next_response})
-    _xray_conversations[user_id] = conv
-    
-    extracted = extract_xray_profile(next_response)
-    if extracted:
-        persona_str = map_xray_to_persona(extracted)
-        mapping = PERSONA_MAPPING.get(persona_str, {})
-        tools = [{"name": t, "description": f"Recommended for {persona_str}"} for t in mapping.get("primary_tools", [])]
-        
-        profile = _get_profile(user_id)
-        profile.persona = persona_str
-        profile.onboarding_complete = True
-        profile.risk_score = extracted.get("risk_score", 5)
-        profile.interests = extracted.get("interests", [])
-        profile.primary_goal = extracted.get("primary_goal")
-        profile.income_type = extracted.get("income_type")
-        profile.age_group = extracted.get("age_group")
-        profile.profile_completeness = 1.0
-        _profiles[user_id] = profile
-        
-        update_user_profile(user_id, profile.model_dump())
-        
-        # Clean up JSON block from message shown to user
-        import re as regex
-        clean_msg = regex.sub(r"```json.*?```", "", next_response, flags=regex.DOTALL).strip()
-        clean_msg = regex.sub(r'\{\s*"xray_complete".*?\}', "", clean_msg, flags=regex.DOTALL).strip()
-        
-        del _xray_conversations[user_id]
-        del _xray_question_count[user_id]
-        
-        # persona_str is an enum sometimes, let's extract the string value.
-        p_val = persona_str.value if hasattr(persona_str, "value") else persona_str
-
+    # Check if user already completed onboarding
+    profile = _get_profile(user_id)
+    if profile.onboarding_complete:
+        p_val = profile.persona.value if hasattr(profile.persona, "value") else profile.persona
+        mapping = PERSONA_MAPPING.get(profile.persona, {})
+        tools = [{"name": t, "description": f"Recommended for {p_val}"} for t in mapping.get("primary_tools", [])]
         return OnboardingResponse(
-            question=clean_msg,
+            question="Your Financial X-Ray is already complete!",
             options=[],
-            step=q_num,
+            step=9,
             is_complete=True,
             persona=p_val,
             recommended_tools=tools,
         ).model_dump()
-        
-    opts = []
-    if q_num < len(PROFILING_QUESTIONS):
-        opts = PROFILING_QUESTIONS[q_num].get("options", [])
+
+    # Reset onboarding state for this user
+    _onboarding_answers[user_id] = {}
+
+    first_q = PROFILING_QUESTIONS[0]
+    greeting = XRAY_WARM_OPEN + first_q["question"]
 
     return OnboardingResponse(
-        question=next_response,
-        options=opts,
-        step=q_num,
+        question=greeting,
+        options=first_q.get("options", []),
+        step=0,
         is_complete=False,
     ).model_dump()
 
 
+@app.post("/api/onboarding/answer")
+async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = Depends(get_current_user)):
+    """Process an onboarding answer and return the next question instantly."""
+    user_id = auth_user.user_id
 
+    # Initialize if needed
+    if user_id not in _onboarding_answers:
+        _onboarding_answers[user_id] = {}
+
+    answers = _onboarding_answers[user_id]
+    current_step = request.step  # 0-indexed: which question was just answered
+
+    # Store the answer
+    if 0 <= current_step < len(PROFILING_QUESTIONS):
+        answers = process_onboarding_answer(current_step + 1, request.answer, answers)
+        _onboarding_answers[user_id] = answers
+
+    next_step = current_step + 1
+
+    # Check if all 9 questions are answered
+    if next_step >= len(PROFILING_QUESTIONS):
+        # Determine persona using rule-based + LLM fallback
+        result = complete_profiling(answers)
+        persona_str = result["persona"]
+
+        # Update user profile
+        profile = _get_profile(user_id)
+        profile.persona = persona_str
+        profile.onboarding_complete = True
+        profile.risk_score = answers.get("risk_score", 5)
+        profile.interests = answers.get("interests", [])
+        profile.primary_goal = answers.get("primary_goal")
+        profile.income_type = answers.get("income_type")
+        profile.age_group = answers.get("age_group")
+        profile.profile_completeness = 1.0
+        _profiles[user_id] = profile
+
+        try:
+            update_user_profile(user_id, profile.model_dump())
+        except Exception as e:
+            print(f"[WARN] Failed to save profile to DB: {e}")
+
+        # Clean up
+        if user_id in _onboarding_answers:
+            del _onboarding_answers[user_id]
+
+        p_val = persona_str.value if hasattr(persona_str, "value") else persona_str
+        tools = result.get("recommended_tools", [])
+
+        return OnboardingResponse(
+            question="Your Financial X-Ray is complete! We've mapped your financial persona.",
+            options=[],
+            step=next_step,
+            is_complete=True,
+            persona=p_val,
+            recommended_tools=tools,
+        ).model_dump()
+
+    # Return the next question
+    next_q = PROFILING_QUESTIONS[next_step]
+    return OnboardingResponse(
+        question=next_q["question"],
+        options=next_q.get("options", []),
+        step=next_step,
+        is_complete=False,
+    ).model_dump()
+
+
+# Keep xray dicts for the /api/chat/xray endpoint (separate flow)
 from typing import Dict, List, Any, Optional
 
 _xray_conversations: Dict[str, list] = {}
