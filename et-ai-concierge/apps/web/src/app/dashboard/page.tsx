@@ -42,6 +42,10 @@ export default function DashboardPage() {
   const [dashboardFeed, setDashboardFeed] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  const handleSignOut = () => {
+    signOut({ callbackUrl: "/" });
+  };
+
   const handleInsightAction = (action: string) => {
     const actionRoutes: Record<string, string> = {
       "Adjust SIP": "/marketplace?filter=sip",

@@ -97,8 +97,8 @@ def retrieve_from_qdrant(query_embedding: List[float], top_k: int = 10) -> List[
     
     try:
         client = QdrantClient(
-            url=settings.get("QDRANT_URL", "http://localhost:6333"),
-            api_key=settings.get("QDRANT_API_KEY"),
+            url=getattr(settings, "QDRANT_URL", "http://localhost:6333"),
+            api_key=getattr(settings, "QDRANT_API_KEY", None),
             timeout=10
         )
         

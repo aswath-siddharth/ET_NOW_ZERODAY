@@ -293,7 +293,7 @@ Output the 2-3 sentence briefing directly (nothing else)."""
 
 # ─── Step 4: Voice Synthesis with Google Cloud TTS ────────────────────────────
 
-def _get_gcp_credentials() -> Optional[Credentials]:
+def _get_gcp_credentials() -> Optional['Credentials']:
     """
     Parse GCP credentials from GCP_CREDENTIALS_JSON env var.
     Returns a Credentials object, or None if not available.
@@ -470,26 +470,27 @@ def synthesize_audio_edge_tts(text: str) -> Optional[bytes]:
                 exception[0] = e
                 return None
         
-        # Try to get running loop (we might be in async context)
-        try:
-            loop = aio.get_running_loop()
-            # We're in async context - can't use asyncio.run()
-            logger.info("[INFO] Already in async context, edge_tts unavailable")
+        def run_in_thread(result_list):
+            try:
+                result_list[0] = aio.run(generate_speech())
+            except Exception as e:
+                exception[0] = e
+
+        result = [None]
+        thread = threading.Thread(target=run_in_thread, args=(result,))
+        thread.start()
+        thread.join()
+        
+        if exception[0]:
+            logger.error(f"[ERROR] Edge TTS generation failed: {exception[0]}")
             return None
-        except RuntimeError:
-            # No running loop, safe to create and use one
-            audio_data = aio.run(generate_speech())
             
-            if exception[0]:
-                logger.error(f"[ERROR] Edge TTS generation failed: {exception[0]}")
-                return None
-            
-            if audio_data:
-                logger.info(f"[OK] Generated edge-tts audio: {len(audio_data)} bytes")
-                return audio_data
-            else:
-                logger.warning("[WARN] Edge TTS returned no data")
-                return None
+        if result[0]:
+            logger.info(f"[OK] Generated edge-tts audio: {len(result[0])} bytes")
+            return result[0]
+        else:
+            logger.warning("[WARN] Edge TTS returned no data")
+            return None
     
     except ImportError:
         logger.warning("[WARN] edge-tts not installed")

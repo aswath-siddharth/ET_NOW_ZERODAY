@@ -1036,7 +1036,7 @@ async def voice_briefing(auth_user: AuthUser = Depends(get_current_user)):
                 )
     
     except Exception as e:
-        print(f"[ERROR] Voice briefing endpoint error: {e}", exc_info=True)
+        print(f"[ERROR] Voice briefing endpoint error: {e}")
         return JSONResponse(
             {
                 "error": "Internal server error",
@@ -1082,7 +1082,7 @@ async def get_dashboard_feed(auth_user: AuthUser = Depends(get_current_user)):
     # Persona-specific market data
     watchlist_symbols = {
         "PERSONA_ACTIVE_TRADER": ["TCS.NS", "INFY.NS", "RELIANCE.NS"],
-        "PERSONA_YOUNG_PROFESSIONAL": ["HDFC.NS", "SBIN.NS", "WIPRO.NS"],
+        "PERSONA_YOUNG_PROFESSIONAL": ["HDFCBANK.NS", "SBIN.NS", "WIPRO.NS"],
         "PERSONA_CORPORATE_EXECUTIVE": ["MARUTI.NS", "BHARTIARTL.NS", "ASIANPAINT.NS"],
         "PERSONA_CONSERVATIVE_SAVER": ["SBIN.NS", "SBINLIFE.NS", "BAJAJFINSV.NS"],
         "PERSONA_HOME_BUYER": ["DLF.NS", "LODHA.NS", "SBIN.NS"],
