@@ -1100,44 +1100,6 @@ tail -f /tmp/rag_ingestion.log
 
 ---
 
-## 📝 Contributing Guidelines
-
-1. **Branch naming:** `feature/description`, `bugfix/issue-name`, `docs/update-readme`
-2. **Commits:** Clear, descriptive messages with ticket refs
-3. **PRs:** Include description, testing notes, screenshots/demo videos
-4. **Code style:**
-   - Python: PEP 8, Black formatter
-   - TypeScript/React: ESLint config
-   - Git pre-commit hooks recommended
-
-### Code Organization
-
-- **Backend:** Organized by agent responsibility (e.g., `market_intelligence_agent.py`)
-- **Frontend:** Component/page-based structure with shared `components/ui/`
-- **Shared types:** `state.py` for core models
-- **Config:** Centralized in `config.py`
-
----
-
-## 📄 License & Compliance
-
-- Ensure all scraped content respects website ToS
-- Ensure compliance with financial regulatory requirements (SEBI guidelines for India)
-- Implement proper KYC/AML checks for transactional features
-- Monitor PII handling per GDPR/India Privacy Act
-
----
-
-## 📞 Support & Contact
-
-For questions or issues:
-- Check the troubleshooting section above
-- Review agent-specific documentation in agent files
-- Create an issue in the repository
-- Contact the development team
-
----
-
 ## 🎯 Future Roadmap
 
 - Mobile app (React Native)
@@ -1152,5 +1114,4 @@ For questions or issues:
 ---
 
 **Last Updated:** March 28, 2026  
-**Version:** 1.0
 
