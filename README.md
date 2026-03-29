@@ -1,24 +1,24 @@
 # ET AI Concierge
 
-A sophisticated **multi-agent AI system** for financial intelligence, market analysis, and personalized investment guidance powered by LangGraph and FastAPI. Built for Economic Times (ET) users with seamless voice, web, and mobile experiences.
+A sophisticated **multi-agent AI system** for financial intelligence, market analysis, and personalized investment guidance powered by LangGraph and FastAPI. Built for Economic Times (ET) users with seamless web, voice, and mobile experiences.
 
 ## 🎯 Project Overview
 
 **ET AI Concierge** is an enterprise-grade AI platform that combines:
-- **Multi-Agent Orchestration**: LangGraph-powered agent framework with specialized agents for market intelligence, editorial content, user profiling, and marketplace transactions
-- **Retrieval-Augmented Generation (RAG)**: Hybrid search across Qdrant vector DB and Elasticsearch for intelligent content retrieval
-- **Compliance & Behavioral Monitoring**: Real-time compliance checks and behavioral profiling for regulatory adherence
-- **Voice Intelligence**: Voice-to-voice interaction via Groq Whisper (STT) and Edge TTS (TTS)
-- **Personalization Engine**: Dynamic user profiling with 5 persona types and progressive onboarding
-- **Real-Time Market Data**: Integration with Finnhub, Yahoo Finance, and custom data feeds
+- **6-Agent LangGraph Orchestration**: Specialized agents for market intelligence, editorial content, user profiling, marketplace intermediation, behavioral monitoring, and compliance
+- **Hybrid RAG System**: Combines vector search (Qdrant) + lexical search (Elasticsearch) + LLM-based reranking for intelligent context retrieval
+- **Voice Intelligence**: End-to-end voice pipeline with STT (Groq Whisper), LLM processing, and TTS (Google Cloud / Edge TTS)
+- **Behavioral Profiling**: Real-time sentiment analysis, intent detection, and paywall management
+- **Compliance & Monitoring**: SEBI-compliant disclaimers, PII detection, sentiment filtering, and audit logging
 
 ### Key Capabilities
-- **Chat Interface**: Web-based conversational AI with streaming responses
-- **Voice Briefing**: Audio-based market updates and personalized content
-- **Market Intelligence**: Real-time quotes, portfolio analysis, technical signals
-- **Content Marketplace**: ELSS funds, insurance products, ET Premium content
-- **User Profiling**: Xray questionnaire, persona mapping, risk scoring
-- **Compliance Wrapper**: PII detection, sentiment analysis, response filtering
+- **Conversational AI**: Web/voice chat interface with streaming responses and RAG-powered content
+- **Voice Briefing**: AI-generated audio market updates based on user interests (90-sec dynamic briefs)
+- **Market Intelligence**: Real-time stock quotes, portfolio analysis, news feeds (Finnhub, NewsAPI, ET RSS)
+- **User Onboarding**: 9-question Xray profiling → 5 financial personas → product recommendations
+- **Marketplace Transactions**: Loan underwriting, EMI calculators, insurance quotes, ELSS comparison
+- **Behavioral Triggers**: Paywall hits, learning gaps → personalized upsell/cross-sell offers
+- **Compliance Layer**: SEBI disclaimers, PII anonymization, audit trail, HITL escalation
 
 ---
 
@@ -88,8 +88,6 @@ ET_NOW_ZERODAY/
 │   │   │   └── reranking/
 │   │   │       ├── reranker.py        # LLM-based result reranking
 │   │   │       └── __init__.py
-│   │   └── voice/                     # Voice AI Pipeline
-│   │       └── voice_pipeline.py      # WebSocket STT/TTS handler
 │   └── scripts/
 │       ├── init_db.sql                # PostgreSQL schema initialization
 │       ├── ingest_et_prime.py         # One-off ingestion script
@@ -185,7 +183,7 @@ ET_NOW_ZERODAY/
 
 ### Data Flow
 
-1. **Web/Voice Input** → Frontend captures user intent via chat or audio
+1. **Web Input** → Frontend captures user intent via chat
 2. **Authentication** → NextAuth verifies session, mints JWT for backend
 3. **Orchestrator** → Receives request, detects intent, routes to specialized agents
 4. **Agent Processing** → Specialized agents query databases, APIs, or RAG engine
@@ -218,48 +216,114 @@ ET_NOW_ZERODAY/
 - `markets/page.tsx` - Market data & portfolio view
 - `marketplace/page.tsx` - ELSS/Insurance products
 - `profile/page.tsx` - User settings & preferences
-- `onboarding/page.tsx` - Xray questionnaire flow
+- `onboarding/page.tsx` - LLM-driven Financial X-Ray (9 questions with button options)
 
 **API Routes (Proxies to Backend):**
 - `api/auth/[...nextauth]/route.ts` - NextAuth callbacks
-- `api/chat/route.ts` - Chat endpoint
-- `api/voice-briefing/route.ts` - Voice interaction
-- `api/xray/route.ts` - Onboarding
+- `api/chat/route.ts` - Chat endpoint (with LLM synthesis)
+- `api/voice-briefing/route.ts` - Voice briefing endpoint
+
+**UI Features:**
+- Streaming chat responses with markdown rendering
+- Voice recording & playback for audio input/output
+- **Onboarding:** Displays clickable button options (no text input needed)
+- Progress tracking (Question X of 9) with animated progress bar
+- Conversation history with sender context (user vs assistant)
 
 ### **Backend Orchestrator (FastAPI)**
 
 **Entry Point:** `orchestrator.py`
 
 **LLM Configuration:**
-- **Primary:** OpenRouter StepFun (free tier, cost-effective)
-- **Fallback:** Groq Llama 3.3 70B (low-latency fallback)
+- **Primary:** OpenRouter StepFun (`stepfun/step-3.5-flash:free`) - Cost-effective, reasoning-capable
+- **Fallback:** Groq Llama 3.3 70B (`llama-3.3-70b-versatile`) - Ultra-low latency (50-500ms)
+- **Final Fallback:** Static questions if both LLMs fail
+
+**URL:** `https://openrouter.ai/api/v1/chat/completions`
 
 **Endpoints:**
 ```
 POST   /api/chat          # Chat interface
-POST   /api/voice-briefing # Voice interaction
 GET    /api/onboarding    # Profiling questions
 POST   /api/onboarding    # Save profile answers
-WS     /ws/voice          # WebSocket for voice pipeline
 GET    /api/user          # Fetch user profile
 POST   /api/user          # Update profile
 ```
 
-### **Multi-Agent System**
+### LLM-Driven Financial X-Ray (Onboarding)
 
-| Agent | Role | Responsibilities |
-|-------|------|------------------|
-| **Agent 0: Orchestrator** | Main brain | Route intents, manage state, synthesize responses |
-| **Agent 2: Editorial** | Content | Retrieve ET Prime/Wealth articles via RAG or mock DB |
-| **Agent 3: Market Intel** | Market data | Real-time quotes, portfolio analysis, trends |
-| **Agent 4: Marketplace** | E-commerce | ELSS funds, insurance products, recommendations |
-| **Agent 5: Profiling** | User data | Xray onboarding, persona mapping, risk scoring |
-| **Agent 6: Behavioral** | Compliance | Paywall tracking, sentiment monitoring, compliance logs |
+The onboarding system (`profiling_agent.py` - `run_xray_step()`) uses LLMs to dynamically generate questions:
 
-**Agent Communication:**
-- Agents communicate via async tasks in LangGraph
-- Shared state (ConciergeState) passed between agents
-- Compliance wrapper applies to all outgoing responses
+**Flow:**
+```
+User starts onboarding
+  ↓
+Backend initializes conversation with warm greeting
+  ↓
+Calls run_xray_step(conversation_history, question_number=0)
+  ↓
+OpenRouter generates Q1 (or Groq/static fallback if it fails)
+  ↓
+User answers → Stored in conversation history
+  ↓
+Calls run_xray_step(conversation_history, question_number=1)
+  ↓
+LLM ADAPTS Q2 based on Q1 answer (context-aware) ← KEY FEATURE
+  ↓
+... repeat 9 times with dynamic adaptation ...
+  ↓
+After Q9: LLM generates summary + JSON profile with persona
+  ↓
+Backend extracts: persona, risk_score, interests, income_type, age_group, etc.
+  ↓
+Profile saved to database, user redirected to dashboard
+```
+
+**Key Features:**
+- **Conversation History** - Full history maintained per user for context
+- **Dynamic Adaptation** - Each question adapts based on previous answers
+- **LLM Fallback Chain** - OpenRouter → Groq → Static questions
+- **JSON Profile Extraction** - LLM outputs structured profile at end
+- **UI Options** - Each question has predefined button options for frontend
+
+### Multi-Agent System (LangGraph)
+
+The orchestrator uses 6 specialized agents working together in a LangGraph state machine:
+
+| Agent | File | Responsibility | Triggers |
+|-------|------|-----------------|----------|
+| **Agent 0: Orchestrator** | `orchestrator.py` | Main coordinator, intent routing, response synthesis | Every user message |
+| **Agent 1: Intent Router** | `intent_router.py` | Detects intent type (inform/transact/learn/discover) | Passive, runs in every flow |
+| **Agent 2: Editorial** | `editorial_agent.py` | Content retrieval via RAG, article recommendations | Intent: LEARN |
+| **Agent 3: Market Intel** | `market_intelligence_agent.py` | Real-time quotes, portfolio analysis, trends | Intent: INFORM, DISCOVER |
+| **Agent 4: Marketplace** | `marketplace_agent.py` | ELSS funds, insurance, loans, product recs | Intent: TRANSACT |
+| **Agent 5: Profiling** | `profiling_agent.py` | Xray onboarding, persona mapping, risk scoring | New users |
+| **Agent 6: Behavioral Monitor** | `behavioral_monitor.py` | Paywall tracking, compliance, upsell triggers | Passive, periodic |
+
+**LangGraph State Flow:**
+```
+Input Message
+    ↓
+[Intent Detection] → Determine intent type
+    ↓
+[Route Decision] → Pick best agent(s)
+    ↓
+[Agent(s) Execute] → Specialized processing (RAG, APIs, etc.)
+    ↓
+[Compliance Check] → PII, sentiment, disclaimers
+    ↓
+[Response Synthesis] → Combine outputs into coherent response
+    ↓
+[Logging] → Save to chat_history + audit_log
+    ↓
+Output to User
+```
+
+**Agent Inter-communication:**
+- Share state via `ConciergeState` (LangGraph)
+- Send messages via async tasks
+- Comply wrapper applies to all outputs
+- Behavioral monitor tracks patterns
 
 ### **RAG Pipeline**
 
@@ -278,20 +342,6 @@ POST   /api/user          # Update profile
    - `reranker.py` - LLM-based re-ranking of top results
 
 **Fallback:** Mock articles in `seed_content.json` if RAG unavailable
-
-### **Voice Pipeline**
-
-**Architecture:**
-```
-Client Audio → Groq Whisper (STT) → Orchestrator → Edge TTS → Audio Response
-```
-
-**WebSocket Handler:** `voice_pipeline.py`
-- Receive audio bytes from client
-- Transcribe via Groq's Whisper model
-- Process through orchestrator
-- Synthesize response via Edge TTS
-- Stream audio back to client
 
 ### **Compliance & Monitoring**
 
@@ -328,7 +378,7 @@ class IntentType:
     INFORM, TRANSACT, LEARN, DISCOVER
 
 class ModalityType:
-    VOICE, WEB, MOBILE
+    WEB, MOBILE
 
 # Core Models
 class Message:
@@ -367,7 +417,7 @@ class Recommendation:
 class ChatRequest:
     message: str
     session_id: str
-    modality: ModalityType  # web, voice, mobile
+    modality: ModalityType  # web, mobile
     context: Optional[Dict[str, Any]]
 
 class AgentResponse:
@@ -509,6 +559,79 @@ python scripts/ingest_et_prime.py
 
 ---
 
+## 📋 Complete API Endpoints Reference
+
+### Authentication Endpoints
+
+```
+POST   /api/auth/signin                # Sign in with credentials
+POST   /api/auth/signout               # Sign out (clear session)
+POST   /api/auth/register              # Create new account
+POST   /api/auth/callback/google       # Google OAuth callback
+GET    /api/auth/session               # Get current session
+```
+
+### Chat & Conversation
+
+```
+POST   /api/chat                       # Send message, get streaming response
+GET    /api/chat/history               # Fetch conversation history
+GET    /api/chat/history/{msg_id}      # Get specific message details
+DELETE /api/chat/history/{msg_id}      # Delete a message
+DELETE /api/chat/history               # Clear all chat history
+```
+
+### Onboarding & Personalization (LLM-Driven X-Ray)
+
+```
+GET    /api/onboarding/start           # Start 9-question X-Ray (returns Q1)
+POST   /api/onboarding/answer          # Submit answer, get next question (Q2-Q9)
+GET    /api/profile                    # Get user profile after onboarding
+PUT    /api/profile                    # Update profile
+```
+
+### User Profile
+
+```
+GET    /api/profile                    # Get user profile
+PUT    /api/profile                    # Update profile
+GET    /api/profile/interests          # Get interests
+PUT    /api/profile/interests          # Update interests
+GET    /api/profile/recommendations    # Personalized products
+```
+
+### Market Data
+
+```
+GET    /api/markets/quote?symbol=RELIANCE      # Real-time quote
+GET    /api/markets/quotes?symbols=RELIANCE,INFY  # Batch quotes
+GET    /api/markets/news?query=tech&limit=10   # News articles
+GET    /api/markets/portfolio/analysis         # Portfolio analysis
+GET    /api/markets/technical?symbol=RELIANCE  # Technical indicators
+GET    /api/markets/trending?sector=tech       # Trending stocks
+```
+
+### Marketplace
+
+```
+GET    /api/marketplace/elss?amount=100000&horizon=long  # ELSS funds
+GET    /api/marketplace/insurance?age=30&income_band=5-10L  # Insurance
+POST   /api/marketplace/loan                   # Calculate loan EMI
+POST   /api/marketplace/loan-compare           # Compare lenders
+GET    /api/marketplace/featured               # Featured products
+GET    /api/marketplace/{product_id}           # Product details
+```
+
+### Voice & Audio
+
+```
+GET    /api/voice-briefing?topics=tech,banking  # Generate audio brief
+POST   /api/voice-briefing/feedback            # Submit feedback
+GET    /api/voice-briefing/history             # Premium: Audio history
+```
+
+---
+
 ## 📋 API Documentation
 
 ### Chat Endpoint
@@ -547,48 +670,80 @@ Response:
 }
 ```
 
-### Onboarding Endpoint
+### Onboarding Endpoints (LLM-Driven Financial X-Ray)
 
-**GET** `/api/onboarding?step=1`
+The onboarding system uses **LLM-driven question generation** (OpenRouter primary, Groq fallback) with dynamic adaptation based on user answers. After 9 questions, the LLM extracts a financial profile and assigns a persona.
 
-Response:
+**GET** `/api/onboarding/start`
+
+Initializes onboarding and returns the first question.
+
+Response (Question 1):
 ```json
 {
-  "step": 1,
-  "question": "What is your primary financial goal?",
-  "options": ["Saving", "Growing wealth", "Protecting assets", "Buying home"],
-  "type": "multiple_choice"
+  "step": 0,
+  "question": "Let's start simple — are you currently salaried, self-employed, or a business owner?",
+  "options": ["salaried", "self-employed", "business owner"],
+  "is_complete": false
 }
 ```
 
-**POST** `/api/onboarding`
+**POST** `/api/onboarding/answer`
+
+Submits an answer and returns the next question (or final profile on Q9).
 
 Request:
 ```json
 {
-  "user_id": "user-123",
-  "answers": {
-    "primary_goal": "Growing wealth",
-    "age_group": "20s",
-    "income_type": "salaried",
-    "home_ownership": "renting",
-    "investment_horizon": "long-term"
-  }
+  "step": 0,
+  "answer": "salaried"
 }
 ```
 
-### Voice Briefing Endpoint
+Response (Question 2):
+```json
+{
+  "step": 1,
+  "question": "Which age bracket are you in — 20s, 30s, 40s, or 50+?",
+  "options": ["20s", "30s", "40s", "50+"],
+  "is_complete": false
+}
+```
 
-**WS** `/ws/voice`
+Response (After Q9 - Final Profile):
+```json
+{
+  "step": 9,
+  "question": "Your Financial X-Ray is complete! We've mapped your financial persona.",
+  "options": [],
+  "is_complete": true,
+  "persona": "PERSONA_YOUNG_PROFESSIONAL",
+  "recommended_tools": [
+    {"name": "ET Wealth SIP Guide", "description": "Recommended for Young Professional"},
+    {"name": "Young Mind Program", "description": "Recommended for Young Professional"}
+  ]
+}
+```
 
-Binary WebSocket for audio streaming:
-1. Client sends audio bytes
-2. Server transcribes (Whisper)
-3. Server processes through orchestrator
-4. Server synthesizes response (Edge TTS)
-5. Server streams audio bytes back
+**9 X-Ray Questions (in order):**
+1. Income type (salaried, self-employed, business owner)
+2. Age group (20s, 30s, 40s, 50+)
+3. Emergency fund (yes, no)
+4. Home ownership (renting, owning)
+5. Risk tolerance (1-10 scale)
+6. Interest sectors (Tech, Pharma, Infrastructure, Banking, Auto, Real Estate, FMCG)
+7. Investment horizon (1-3 years, 3-5 years, 5-10 years, 10+ years)
+8. Trading style (active trader, SIP investor, both)
+9. Primary goal (saving, growing, protecting, buying)
 
----
+**Personas Assigned:**
+- `PERSONA_CONSERVATIVE_SAVER` - Low risk, capital preservation focus
+- `PERSONA_ACTIVE_TRADER` - High risk, active market participation
+- `PERSONA_YOUNG_PROFESSIONAL` - Early career, moderate-high risk, wealth building
+- `PERSONA_CORPORATE_EXECUTIVE` - Established, asset protection focus
+- `PERSONA_HOME_BUYER` - Primary goal is real estate acquisition/planning
+
+
 
 ## 📊 Database Queries & Health Checks
 
@@ -610,32 +765,100 @@ curl http://localhost:6333/health
 curl http://localhost:9200/_cluster/health
 ```
 
-### Test Backend
+### Check Backend Services
 
 ```bash
-curl http://localhost:8000/docs  # Swagger UI
-curl http://localhost:8000/health  # Health check (if implemented)
+# Swagger UI
+curl http://localhost:8000/docs
+
+# OpenAPI spec
+curl http://localhost:8000/openapi.json
+
+# Test chat (with mock token)
+curl -X POST http://localhost:8000/api/chat \
+  -H "Authorization: Bearer demo-token" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello", "session_id": "test-session"}'
 ```
 
 ---
 
-## 🔐 Authentication & Security
+## 🎙️ Voice Pipeline
 
-### NextAuth.js Flow
+The end-to-end voice system enables conversational AI with spoken input and output:
 
-1. **Login Page** → User enters credentials
-2. **NextAuth Provider** → Validates against backend OAuth/JWT
-3. **JWT Mint** → Frontend calls `mintBackendToken()` to get JWT for backend
-4. **Backend Token** → Passed in `Authorization: Bearer <token>` header
-5. **JWT Validation** → Backend validates token with `get_current_user(token)`
+### Voice Briefing Architecture
 
-### Compliance & Security
+**Flow:**
+1. **Topic Extraction** - Get user interests from chat history or profile
+2. **Data Retrieval** - RAG hybrid search for market trends + news
+3. **Script Generation** - LLM creates ~90-second conversational script
+4. **Speech Synthesis** - TTS converts text → audio (MP3)
+5. **Streaming** - Frontend plays audio via HTML5 player
 
-- **PII Detection** → Compliance wrapper detects sensitive data
-- **Sentiment Analysis** → Monitor user emotional state
-- **Audit Logging** → All interactions logged to PostgreSQL
-- **Rate Limiting** → Recommended at API gateway level
-- **CORS** → Configured in FastAPI (`CORSMiddleware`)
+**Implementation:** `packages/voice/voice_pipeline.py` and `voice_briefing.py`
+
+### Voice Endpoints
+
+**GET** `/api/voice-briefing?topics=tech,banking`
+
+- Generates personalized audio brief (90 seconds)
+- Topics default to user interests if not specified
+- Returns: audio/mpeg stream
+
+**Modality:** Web, voice, or mobile
+
+### TTS Configuration
+
+**Primary:** Google Cloud Text-to-Speech
+- Voice: `en-IN-Standard-A` (Indian English)
+- Format: MP3, 24kHz
+
+**Fallback:** Microsoft Edge TTS
+- Voice: `en-IN-NeerjaNeural`
+- Free tier, no authentication required
+
+### Example Flow
+
+```
+User clicks "Voice Briefing" button
+  ↓
+Frontend fetches GET /api/voice-briefing
+  ↓
+Backend:
+  1. Extract topics: ["tech", "banking"]
+  2. RAG search: Get top 5 articles
+  3. LLM generates script: "Today in tech markets..."
+  4. TTS synthesizes: "Today in tech markets..." → audio bytes
+  5. Streams MP3 back to frontend
+  ↓
+Frontend: HTML5 player plays audio
+```
+
+---
+
+## 🔒 Security & Compliance
+
+### Authentication
+
+- **NextAuth.js** - Session management (browser cookies)
+- **JWT Backend Token** - Signed HS256, passed in Authorization header
+- **Database** - User credentials stored with bcrypt hashing
+
+### Compliance
+
+- **SEBI Disclaimers** - Applied to all investment advice
+- **PII Detection** - Masks email, phone, SSN, card numbers
+- **Audit Logging** - All interactions logged to PostgreSQL
+- **Behavioral Monitoring** - Tracks usage for paywall & recommendations
+- **Rate Limiting** - Recommended at API gateway / proxy level
+
+### Data Privacy
+
+- User data stored in PostgreSQL (encrypted at rest in production)
+- Chat history retained for 180 days (configurable)
+- No sharing with third parties except for LLM inference
+- GDPR/India Privacy Act compliance required
 
 ---
 
@@ -645,9 +868,9 @@ curl http://localhost:8000/health  # Health check (if implemented)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `AUTH_SECRET` | NextAuth signing key | (required) |
-| `OPENROUTER_API_KEY` | OpenRouter LLM API | (required) |
-| `GROQ_API_KEY` | Groq LLM + Whisper | (required) |
+| `AUTH_SECRET` | NextAuth signing key | **(required)** |
+| `OPENROUTER_API_KEY` | OpenRouter LLM API (PRIMARY) | **(required)** |
+| `GROQ_API_KEY` | Groq LLM + Whisper (FALLBACK) | **(required)** |
 | `DATABASE_URL` | PostgreSQL connection | `postgresql://user:password@localhost:5432/et_concierge` |
 | `REDIS_URL` | Redis cache | `redis://localhost:6379/0` |
 | `QDRANT_URL` | Vector DB | `http://localhost:6333` |
@@ -657,7 +880,7 @@ curl http://localhost:8000/health  # Health check (if implemented)
 | `NEWSAPI_API_KEY` | News feeds | (optional) |
 | `LANGSMITH_API_KEY` | LangChain observability | (optional) |
 | `SENTRY_DSN` | Error tracking | (optional) |
-| `EDGE_TTS_VOICE` | Text-to-speech voice | `en-IN-NeerjaNeural` |
+
 
 ### Config Validation
 
@@ -689,8 +912,8 @@ pytest packages/agents/test_orchestrator.py::test_chat_endpoint -v
 Test end-to-end flows:
 
 ```bash
-# Test chat with voice
-python tests/test_voice_pipeline.py
+# Test chat with backend
+python tests/test_chat.py
 
 # Test RAG retrieval
 python tests/test_rag_retrieval.py
@@ -750,73 +973,130 @@ docker push et-concierge-web:latest
 
 ## 📚 Dependencies
 
-### Frontend (package.json)
+### Frontend (`apps/web/package.json`)
 
 ```
-React 19.2, Next.js 16.2, TypeScript 5, Tailwind CSS 4
-Radix UI, NextAuth.js, Framer Motion, Recharts
-React Markdown, LucideReact
+Core: react@19.2, next@16.2, typescript@5, tailwindcss@4
+UI: @radix-ui/*, framer-motion, recharts, react-markdown, lucide-react
+Auth: next-auth@5
 ```
 
-### Backend (requirements.txt)
+### Backend (`packages/agents/requirements.txt`)
 
 ```
-FastAPI, Uvicorn, LangGraph, LangChain, Groq
-Sentence Transformers, pgvector, Qdrant Client
-Elasticsearch, Neo4j, Redis, PostgreSQL (psycopg2)
-YFinance, FinnHub, NewsAPI, DDGS
-Edge TTS, Google Cloud TTS, Pydantic
+Framework: fastapi, uvicorn, langgraph, langchain
+LLM: groq, openrouter
+Search: sentence-transformers, qdrant-client, elasticsearch, pgvector
+DB: psycopg2-binary, redis, neo4j
+APIs: yfinance, finnhub-python, newsapi, duckduckgo-search
+Utils: pydantic, pandas, python-dotenv, langsmith, sentry-sdk
 ```
 
-### RAG (requirements.txt)
+### RAG (`packages/rag/requirements.txt`)
 
 ```
-Qdrant Client, Elasticsearch, Neo4j
-LLama Index, Sentence Transformers, LangChain
-Python DotEnv
+Search: qdrant-client, elasticsearch, sentence-transformers
+AI: langchain, llama-index (optional)
+Web: beautifulsoup4, requests
+Tasks: apscheduler, python-dotenv
 ```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Common Issues
+### Common Issues & Diagnostics
 
-**PostgreSQL connection refused:**
+**PostgreSQL Connection Issues**
 ```bash
-# Check container running
+# Check if running
 docker ps | grep postgres
 
-# View logs
-docker logs <container_id>
+# View logs for errors
+docker logs <postgres_container_id>
 
-# Restart
-docker-compose down && docker-compose up -d
+# Test connection
+psql -U user -d et_concierge -h localhost -c "SELECT 1"
+
+# Restart if needed
+docker-compose restart postgres
 ```
 
-**Qdrant not responding:**
+**Qdrant Vector DB Not Responding**
 ```bash
-# Check Qdrant health
+# Health check
 curl http://localhost:6333/health
 
-# Verify container
+# View collections
+curl http://localhost:6333/collections
+
+# Check container logs
 docker logs <qdrant_container_id>
+
+# Restart
+docker-compose restart qdrant
 ```
 
-**LLM API errors:**
-- Verify API keys in `.env`
-- Check OpenRouter/Groq account limits
-- See FastAPI logs for detailed errors
+**Elasticsearch Search Index Down**
+```bash
+# Cluster health
+curl http://localhost:9200/_cluster/health
 
-**RAG ingestion failing:**
-- Check PostgreSQL/Qdrant connectivity
-- Verify sentence-transformers model downloaded
-- Run: `python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"`
+# List indices
+curl http://localhost:9200/_cat/indices
 
-**Voice not working:**
-- Verify Groq API key
-- Check Edge TTS voice name (`settings.EDGE_TTS_VOICE`)
-- Test audio format (WAV expected)
+# Check logs
+docker logs <elasticsearch_container_id>
+
+# Restart
+docker-compose restart elasticsearch
+```
+
+**LLM API Errors (OpenRouter/Groq)**
+- Verify keys: `echo $OPENROUTER_API_KEY` and `echo $GROQ_API_KEY`
+- Check account limits and billing in OpenRouter/Groq console
+- Test directly: `python -c "from groq import Groq; Groq().models.list()"`
+- View backend logs: `docker logs et-concierge-backend -f`
+
+**RAG Ingestion Failures**
+```bash
+# Verify all services running
+docker-compose ps
+
+# Check embeddings model
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Re-ingest articles
+python packages/rag/ingestion/ingest.py --clear --verbose
+
+# View ingestion logs
+tail -f /tmp/rag_ingestion.log
+```
+
+**Chat Returns No Response**
+- Check user profile exists: `psql -c "SELECT * FROM users WHERE email = 'your@email.com'"`
+- Verify intent detection in FastAPI logs
+- Test RAG separately: `python packages/rag/retrieval/hybrid_search.py --query "test"`
+- Check LLM API keys and quotas
+
+**Voice Briefing Returns 503**
+- Verify TTS service: `python -c "from edge_tts import Text; print('OK')"`
+- Check GCP credentials if using Google Cloud: `cat $GCP_CREDENTIALS_JSON | jq .`
+- Ensure user profile has interests: `psql -c "SELECT interests FROM user_profiles LIMIT 1"`
+- Verify LLM for script generation available
+
+**Frontend Cannot Connect to Backend**
+- Backend running: `curl http://localhost:8000/docs`
+- Check BACKEND_URL env var in frontend
+- CORS issue: Open DevTools Network tab, check response headers
+- JWT token invalid: Verify `AUTH_SECRET` is same on frontend & backend
+- Test endpoint directly: `curl -X POST http://localhost:8000/api/chat -H "Authorization: Bearer token"`
+
+**Authentication Failing**
+- Verify user exists: `psql -c "SELECT email FROM users LIMIT 5"`
+- Check AUTH_SECRET set: `echo $AUTH_SECRET`
+- JWT decode test: `python -c "import jwt; jwt.decode('token', 'secret', algorithms=['HS256'])"`
+- Clear browser cookies and try again
 
 ---
 
