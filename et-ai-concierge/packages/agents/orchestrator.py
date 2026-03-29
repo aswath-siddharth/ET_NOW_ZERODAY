@@ -7,7 +7,7 @@ import json
 import uuid
 import asyncio
 import datetime
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 from pydantic import BaseModel as PydanticBaseModel
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -425,7 +425,6 @@ def _llm_synthesize(agent_response: AgentResponse, sentiment: SentimentType, use
                     ],
                     "temperature": 0.7,
                     "max_tokens": 4096,
-                    "reasoning": {"enabled": True}
                 }
                 response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
                 response.raise_for_status()
@@ -748,15 +747,19 @@ async def resume_session(modality: str = "web", auth_user: AuthUser = Depends(ge
     }
 
 
-# ─── Onboarding Endpoints (Deterministic Flow) ───────────────────────────────
+# ─── Onboarding Endpoints (LLM-Driven with Conversation History) ───────────────────────────────
 
 # In-memory store for onboarding answers per user
 _onboarding_answers: Dict[str, Dict[str, Any]] = {}
+# In-memory store for conversation history per user
+_onboarding_history: Dict[str, List[Dict[str, str]]] = {}
+# Track which question number we're on for each user (0-8 for asking, 9 for summary)
+_onboarding_step: Dict[str, int] = {}
 
 
 @app.get("/api/onboarding/start")
 async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
-    """Start the onboarding flow. Returns greeting + first question instantly."""
+    """Start the onboarding flow with LLM-driven X-Ray. Returns greeting + first question."""
     user_id = auth_user.user_id
 
     # Check if user already completed onboarding
@@ -774,15 +777,32 @@ async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
             recommended_tools=tools,
         ).model_dump()
 
-    # Reset onboarding state for this user
+    # Initialize onboarding state for this user
     _onboarding_answers[user_id] = {}
+    _onboarding_history[user_id] = []
+    _onboarding_step[user_id] = 0
 
-    first_q = PROFILING_QUESTIONS[0]
-    greeting = XRAY_WARM_OPEN + first_q["question"]
+    # Initialize conversation with warm greeting
+    _onboarding_history[user_id].append({
+        "role": "assistant",
+        "content": XRAY_WARM_OPEN
+    })
+
+    # Get first question from LLM (question 0 of 9)
+    from profiling_agent import XRAY_QUESTION_OPTIONS
+    first_question = run_xray_step(
+        conversation_history=_onboarding_history[user_id],
+        question_number=0
+    )
+
+    print(f"[INFO] Starting onboarding for user {user_id}, question #1")
+
+    # Get options for this question
+    question_options = XRAY_QUESTION_OPTIONS[0] if 0 < len(XRAY_QUESTION_OPTIONS) else []
 
     return OnboardingResponse(
-        question=greeting,
-        options=first_q.get("options", []),
+        question=first_question,
+        options=question_options,
         step=0,
         is_complete=False,
     ).model_dump()
@@ -790,53 +810,90 @@ async def start_onboarding(auth_user: AuthUser = Depends(get_current_user)):
 
 @app.post("/api/onboarding/answer")
 async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = Depends(get_current_user)):
-    """Process an onboarding answer and return the next question instantly."""
+    """Process LLM-driven X-Ray answer and return the next question or final persona."""
     user_id = auth_user.user_id
 
     # Initialize if needed
-    if user_id not in _onboarding_answers:
+    if user_id not in _onboarding_history:
+        _onboarding_history[user_id] = []
         _onboarding_answers[user_id] = {}
+        _onboarding_step[user_id] = 0
 
-    answers = _onboarding_answers[user_id]
-    current_step = request.step  # 0-indexed: which question was just answered
+    current_step = request.step  # 0-indexed: which question was just answered (0-8)
 
-    # Store the answer
-    if 0 <= current_step < len(PROFILING_QUESTIONS):
-        answers = process_onboarding_answer(current_step + 1, request.answer, answers)
-        _onboarding_answers[user_id] = answers
+    # Add user's answer to conversation history
+    _onboarding_history[user_id].append({
+        "role": "user",
+        "content": request.answer
+    })
+
+    # Also parse and store the structured answer
+    _onboarding_answers[user_id] = process_onboarding_answer(current_step + 1, request.answer, _onboarding_answers[user_id])
 
     next_step = current_step + 1
 
-    # Check if all 9 questions are answered
-    if next_step >= len(PROFILING_QUESTIONS):
-        # Determine persona using rule-based + LLM fallback
-        result = complete_profiling(answers)
-        persona_str = result["persona"]
-
-        # Update user profile
-        profile = _get_profile(user_id)
-        profile.persona = persona_str
-        profile.onboarding_complete = True
-        profile.risk_score = answers.get("risk_score", 5)
-        profile.interests = answers.get("interests", [])
-        profile.primary_goal = answers.get("primary_goal")
-        profile.income_type = answers.get("income_type")
-        profile.age_group = answers.get("age_group")
-        profile.profile_completeness = 1.0
-        _profiles[user_id] = profile
-
+    # Check if all 9 questions have been answered (next_step would be 9)
+    if next_step >= 9:
+        print(f"[INFO] All 9 questions answered for user {user_id}, generating final summary...")
+        
+        # Call run_xray_step with question_number=9 to get the final summary + JSON profile
+        final_response = run_xray_step(
+            conversation_history=_onboarding_history[user_id],
+            question_number=9
+        )
+        
+        print(f"[INFO] Final X-Ray response: {final_response[:200]}...")
+        
+        # Try to extract JSON profile from the response
         try:
-            update_user_profile(user_id, profile.model_dump())
-        except Exception as e:
-            print(f"[WARN] Failed to save profile to DB: {e}")
-
-        # Clean up
+            # Look for JSON block in the response
+            json_start = final_response.rfind('{"xray_complete"')
+            json_end = final_response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = final_response[json_start:json_end]
+                profile_data = json.loads(json_str)
+                
+                if profile_data.get("xray_complete") and "profile" in profile_data:
+                    extracted_profile = profile_data["profile"]
+                    persona_str = extracted_profile.get("persona", "PERSONA_YOUNG_PROFESSIONAL")
+                    
+                    print(f"[OK] Extracted persona: {persona_str}")
+                    
+                    # Update user profile
+                    profile = _get_profile(user_id)
+                    profile.persona = persona_str
+                    profile.onboarding_complete = True
+                    profile.risk_score = extracted_profile.get("risk_score", 5)
+                    profile.interests = extracted_profile.get("interests", [])
+                    profile.primary_goal = extracted_profile.get("primary_goal")
+                    profile.income_type = extracted_profile.get("income_type")
+                    profile.age_group = extracted_profile.get("age_group")
+                    profile.profile_completeness = 1.0
+                    _profiles[user_id] = profile
+                    
+                    try:
+                        update_user_profile(user_id, profile.model_dump())
+                        print(f"[OK] Profile saved to database for user {user_id}")
+                    except Exception as e:
+                        print(f"[WARN] Failed to save profile to DB: {e}")
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON profile: {e}")
+        
+        # Clean up onboarding state for this user
         if user_id in _onboarding_answers:
             del _onboarding_answers[user_id]
-
-        p_val = persona_str.value if hasattr(persona_str, "value") else persona_str
-        tools = result.get("recommended_tools", [])
-
+        if user_id in _onboarding_history:
+            del _onboarding_history[user_id]
+        if user_id in _onboarding_step:
+            del _onboarding_step[user_id]
+        
+        # Get persona for response
+        profile = _get_profile(user_id)
+        p_val = profile.persona.value if hasattr(profile.persona, "value") else profile.persona
+        mapping = PERSONA_MAPPING.get(profile.persona, {})
+        tools = [{"name": t, "description": f"Recommended for {p_val}"} for t in mapping.get("primary_tools", [])]
+        
         return OnboardingResponse(
             question="Your Financial X-Ray is complete! We've mapped your financial persona.",
             options=[],
@@ -845,12 +902,29 @@ async def answer_onboarding(request: OnboardingRequest, auth_user: AuthUser = De
             persona=p_val,
             recommended_tools=tools,
         ).model_dump()
-
-    # Return the next question
-    next_q = PROFILING_QUESTIONS[next_step]
+    
+    # Not done yet - get the next question from LLM
+    print(f"[INFO] Processing answer for question {current_step + 1}/9, fetching question {next_step + 1}/9 from LLM")
+    
+    from profiling_agent import XRAY_QUESTION_OPTIONS
+    
+    next_question = run_xray_step(
+        conversation_history=_onboarding_history[user_id],
+        question_number=next_step
+    )
+    
+    # Add assistant's response to conversation history
+    _onboarding_history[user_id].append({
+        "role": "assistant",
+        "content": next_question
+    })
+    
+    # Get options for this question
+    question_options = XRAY_QUESTION_OPTIONS[next_step] if next_step < len(XRAY_QUESTION_OPTIONS) else []
+    
     return OnboardingResponse(
-        question=next_q["question"],
-        options=next_q.get("options", []),
+        question=next_question,
+        options=question_options,
         step=next_step,
         is_complete=False,
     ).model_dump()

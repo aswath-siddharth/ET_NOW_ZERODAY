@@ -367,6 +367,19 @@ XRAY_WARM_OPEN = (
     "Just 9 quick questions — takes about 3 minutes.\n\n"
 )
 
+# Question-specific options for UI
+XRAY_QUESTION_OPTIONS = [
+    ["salaried", "self-employed", "business owner"],  # Q1: Income
+    ["20s", "30s", "40s", "50+"],  # Q2: Age
+    ["yes", "no"],  # Q3: Emergency fund
+    ["renting", "owning"],  # Q4: Home ownership
+    [str(i) for i in range(1, 11)],  # Q5: Risk (1-10)
+    ["Tech", "Pharma", "Infrastructure", "Banking", "Auto", "Real Estate", "FMCG"],  # Q6: Sectors
+    ["1-3 years", "3-5 years", "5-10 years", "10+ years"],  # Q7: Horizon
+    ["active trader", "SIP investor", "both"],  # Q8: Trading style
+    ["saving", "growing", "protecting", "buying"],  # Q9: Goal
+]
+
 XRAY_FALLBACK_QUESTIONS = [
     "Let's start simple — are you currently salaried, self-employed, or a business owner?",
     "Which age bracket are you in — 20s, 30s, 40s, or 50+?",
@@ -424,7 +437,6 @@ def run_xray_step(
                 "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": 1024,
-                "reasoning": {"enabled": True}
             }
             response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=30)
             response.raise_for_status()
