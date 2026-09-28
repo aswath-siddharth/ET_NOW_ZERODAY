@@ -38,76 +38,124 @@ export function VoiceBriefingButton({ className }: VoiceBriefingButtonProps) {
         throw new Error("No response body for audio stream");
       }
 
-      // Stream audio chunks and play as soon as enough data arrives
+      // Stream audio chunks and play as soon as data arrives
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
       let totalBytes = 0;
       let hasStartedPlayback = false;
-      const PLAYBACK_THRESHOLD = 50 * 1024; // Start playback after 50KB
 
-      console.log("[INFO] Starting audio stream...");
+      // Check for MediaSource support for progressive chunk playback
+      const canUseMSE =
+        typeof window !== "undefined" &&
+        !!window.MediaSource &&
+        MediaSource.isTypeSupported("audio/mpeg");
 
-      // Read and buffer chunks
-      const readLoop = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
+      let mediaSource: MediaSource | null = null;
+      let sourceBuffer: SourceBuffer | null = null;
 
-          if (done) {
-            console.log(`[INFO] Stream complete: ${totalBytes} bytes received`);
-            break;
+      if (canUseMSE && audioRef.current) {
+        try {
+          mediaSource = new MediaSource();
+          const audioUrl = URL.createObjectURL(mediaSource);
+          audioRef.current.src = audioUrl;
+
+          await new Promise<void>((resolve) => {
+            if (!mediaSource) return resolve();
+            mediaSource.addEventListener(
+              "sourceopen",
+              () => {
+                try {
+                  if (mediaSource && mediaSource.readyState === "open") {
+                    sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+                  }
+                } catch (e) {
+                  console.warn("[WARN] MSE addSourceBuffer failed:", e);
+                }
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        } catch (mseErr) {
+          console.warn("[WARN] MSE init failed, falling back to full stream:", mseErr);
+          mediaSource = null;
+          sourceBuffer = null;
+        }
+      }
+
+      console.log("[INFO] Starting audio chunk stream...");
+
+      // Read chunks progressively
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          console.log(`[INFO] Audio stream complete: ${totalBytes} bytes received`);
+          if (mediaSource && mediaSource.readyState === "open") {
+            if (sourceBuffer && sourceBuffer.updating) {
+              await new Promise((r) =>
+                sourceBuffer!.addEventListener("updateend", r, { once: true })
+              );
+            }
+            try {
+              mediaSource.endOfStream();
+            } catch (e) {
+              // ignore
+            }
           }
+          break;
+        }
 
+        if (value && value.length > 0) {
           chunks.push(value);
           totalBytes += value.length;
-          console.log(`[INFO] Received chunk: +${value.length} bytes (total: ${totalBytes})`);
 
-          // Start playback once we have enough buffered (50KB)
-          if (!hasStartedPlayback && totalBytes >= PLAYBACK_THRESHOLD) {
-            hasStartedPlayback = true;
-            console.log(`[INFO] Sufficient buffer (${totalBytes}B), starting playback...`);
-
-            // Create blob and start playback - do this ONCE only
-            const audioBlob = new Blob(chunks, { type: "audio/mpeg" });
-            const audioUrl = URL.createObjectURL(audioBlob);
-
-            if (audioRef.current) {
-              audioRef.current.src = audioUrl;
-              audioRef.current.load(); // Force reload to enable streaming
-              
-              const playPromise = audioRef.current.play();
-
-              if (playPromise !== undefined) {
-                playPromise
-                  .then(() => {
-                    console.log("[OK] Audio playback started (streaming)");
-                    setIsPlaying(true);
-                  })
-                  .catch((err) => {
-                    console.error("[ERROR] Playback failed:", err.message);
-                    setError(`Playback error: ${err.message}`);
-                  });
+          // Progressive append if MediaSource active
+          if (sourceBuffer && mediaSource && mediaSource.readyState === "open") {
+            try {
+              if (sourceBuffer.updating) {
+                await new Promise((r) =>
+                  sourceBuffer!.addEventListener("updateend", r, { once: true })
+                );
               }
+              sourceBuffer.appendBuffer(value);
+
+              if (!hasStartedPlayback && totalBytes >= 8192 && audioRef.current) {
+                hasStartedPlayback = true;
+                setIsLoading(false);
+                audioRef.current.play().catch(console.error);
+              }
+            } catch (err) {
+              console.warn("[WARN] MSE append failed, falling back to blob:", err);
+              sourceBuffer = null;
+              mediaSource = null;
             }
           }
         }
-      };
+      }
 
-      // Run read loop without awaiting immediately (let it continue in background)
-      readLoop().catch((err) => {
-        console.error("[ERROR] Stream reading error:", err);
-        if (!hasStartedPlayback) {
-          setError("Failed to receive audio stream");
+      // Fallback: If MSE wasn't used or playback hasn't started yet, play complete blob
+      if (!hasStartedPlayback && chunks.length > 0 && audioRef.current) {
+        const audioBlob = new Blob(chunks, { type: "audio/mpeg" });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        audioRef.current.src = audioUrl;
+        audioRef.current.load();
+        hasStartedPlayback = true;
+        setIsLoading(false);
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => setIsPlaying(true))
+            .catch((err) => {
+              console.error("[ERROR] Playback failed:", err.message);
+              setError(`Playback error: ${err.message}`);
+            });
         }
-      });
-
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error("[ERROR] Voice briefing error:", message);
       setError(message);
-
-      if (typeof window !== "undefined" && "alert" in window) {
-        alert(`Voice briefing failed: ${message}`);
-      }
     } finally {
       setIsLoading(false);
     }

@@ -448,6 +448,8 @@ def verify_user_credentials(email: str, password: str) -> Optional[Dict[str, Any
 
 def update_user_profile(user_id: str, profile_data: Dict[str, Any]):
     """Update a user's profile in Postgres."""
+    if not _pg_available:
+        return _sqlite_update_user_profile(user_id, profile_data)
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -485,6 +487,8 @@ def update_user_profile(user_id: str, profile_data: Dict[str, Any]):
 
 def get_user(user_id: str) -> Optional[Dict[str, Any]]:
     """Retrieve a user profile from Postgres."""
+    if not _pg_available:
+        return _sqlite_get_user(user_id)
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -598,6 +602,9 @@ def save_chat_message(
     agent_id: Optional[str] = None,
 ):
     """Persist a chat message to the chat_history table."""
+    if not _pg_available:
+        _sqlite_save_chat_message(user_id, session_id, role, content, agent_id)
+        return
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -619,6 +626,8 @@ def get_chat_history(
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     """Retrieve chat messages for a user, optionally filtered by session."""
+    if not _pg_available:
+        return _sqlite_get_chat_history(user_id, session_id, limit)
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)

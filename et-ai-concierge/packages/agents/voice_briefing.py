@@ -185,12 +185,12 @@ def _call_openrouter(
             "temperature": 0.7,
         }
         
-        logger.info(f"[INFO] Calling OpenRouter (timeout: 20s)...")
+        logger.info(f"[INFO] Calling OpenRouter {settings.OPENROUTER_MODEL} (timeout: 15s)...")
         response = requests.post(
             settings.OPENROUTER_URL,
             headers=headers,
             json=payload,
-            timeout=20,  # Reduced from 30s to 20s
+            timeout=15,
         )
         
         logger.info(f"[INFO] OpenRouter response status: {response.status_code}")
@@ -237,7 +237,7 @@ def _call_openrouter(
         return generated_text
     
     except requests.exceptions.Timeout:
-        logger.error("[ERROR] OpenRouter API timeout (20s exceeded)")
+        logger.error("[ERROR] OpenRouter API timeout (15s exceeded)")
         return None
     except requests.exceptions.ConnectionError:
         logger.error("[ERROR] OpenRouter API connection error")
@@ -253,7 +253,8 @@ def generate_voice_script(
 ) -> Optional[str]:
     """
     Generate a conversational, TTS-friendly financial briefing script.
-    Falls back to template if LLM fails.
+    Uses 120B model (OpenRouter) as primary to preserve Groq free-tier quota.
+    Falls back to Groq if OpenRouter fails or is rate-limited.
     
     Args:
         user_topics: Summary of user's financial interests
@@ -273,19 +274,44 @@ DATA: {rag_data[:200]}
 
 Output the 2-3 sentence briefing directly (nothing else)."""
 
-    logger.info("[3/5] Generating voice script via LLM...")
+    logger.info(f"[3/5] Generating voice script via primary 120B model ({settings.OPENROUTER_MODEL})...")
+    
+    # ──── Primary: 120B model on OpenRouter ────
     script = _call_openrouter(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        # Don't override max_tokens - use the 1500 default
+        max_tokens=200,
     )
     
-    if script:
-        logger.info(f"[OK] Generated script: {script[:100]}...")
+    if script and len(script.strip()) > 10:
+        logger.info(f"[OK] 120B model generated script: {script[:100]}...")
         return script
+
+    # ──── Fallback: Groq (only used when OpenRouter fails to save Groq limits) ────
+    if getattr(settings, "GROQ_API_KEY", None):
+        logger.warning("[WARN] OpenRouter 120B failed/rate-limited, falling back to Groq...")
+        try:
+            from groq import Groq
+            client = Groq(api_key=settings.GROQ_API_KEY)
+            resp = client.chat.completions.create(
+                model=getattr(settings, "GROQ_MODEL", "qwen/qwen3.8-27b"),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=150,
+                temperature=0.7,
+                timeout=5.0
+            )
+            candidate = resp.choices[0].message.content.strip()
+            if candidate and len(candidate) > 10:
+                logger.info(f"[OK] Groq fallback generated voice script: {candidate[:100]}...")
+                return candidate
+        except Exception as e:
+            logger.warning(f"[WARN] Groq fallback also failed: {e}")
     
-    # FALLBACK: Generate template-based script if LLM fails
-    logger.warning("[WARN] LLM failed, using template script")
+    # ──── Final Fallback: Template-based script ────
+    logger.warning("[WARN] Both LLMs failed, using template script")
     template_script = f"""Based on the latest market updates, here's what's happening in your areas of interest. {rag_data[:100]}. We recommend checking the ET platform for more detailed analysis and personalized recommendations."""
     logger.info(f"[OK] Using template script: {template_script[:100]}...")
     return template_script
@@ -498,6 +524,68 @@ def synthesize_audio_edge_tts(text: str) -> Optional[bytes]:
     except Exception as e:
         logger.error(f"[ERROR] Edge TTS failed: {e}")
         return None
+
+
+async def stream_audio_edge_tts(text: str):
+    """
+    True real-time audio chunk generator using edge-tts Communicate.stream().
+    Directly yields MP3 audio chunks in real-time as Microsoft Edge TTS generates them.
+    """
+    import edge_tts
+    communicate = edge_tts.Communicate(
+        text=text,
+        voice=settings.EDGE_TTS_VOICE,
+        rate="+10%",
+    )
+    async for chunk in communicate.stream():
+        if chunk.get("type") == "audio":
+            yield chunk["data"]
+
+
+async def generate_voice_briefing_stream(user_id: str, session_id: Optional[str] = None):
+    """
+    Asynchronous generator providing real-time streaming voice briefing:
+    1. Extracts topics from chat history or profile
+    2. Fetches live RAG market data (bypassing dead DB timeouts)
+    3. Generates 2-3 sentence conversational script in ~0.5s via Groq
+    4. Yields audio chunks in real-time as they stream from edge_tts
+    """
+    if not user_id:
+        user_id = "default_user"
+    
+    logger.info(f"\n{'='*60}")
+    logger.info(f"[VOICE BRIEFING STREAM] Starting streaming pipeline for user: {user_id}")
+    logger.info(f"{'='*60}")
+    
+    try:
+        user_topics = get_user_topics_from_chat_history(user_id, session_id)
+    except Exception as e:
+        logger.warning(f"[WARN] Failed to get chat topics: {e}")
+        user_topics = "general financial market updates"
+
+    try:
+        rag_data = fetch_rag_briefing_data(user_topics)
+    except Exception as e:
+        logger.warning(f"[WARN] Failed to fetch RAG data: {e}")
+        rag_data = _fetch_fallback_market_data()
+
+    script = generate_voice_script(user_topics, rag_data)
+    if not script or len(script.strip()) < 10:
+        script = "Welcome to your ET AI Concierge daily market briefing. Markets are tracking active momentum today. Visit your ET dashboard for detailed stock and fund insights."
+
+    logger.info(f"[VOICE BRIEFING STREAM] Streaming audio for: {script[:70]}...")
+    
+    has_streamed = False
+    try:
+        async for chunk in stream_audio_edge_tts(script):
+            has_streamed = True
+            yield chunk
+    except Exception as e:
+        logger.error(f"[ERROR] Edge TTS streaming failed: {e}")
+
+    if not has_streamed:
+        logger.warning("[WARN] Edge TTS stream failed, yielding dummy fallback audio")
+        yield synthesize_audio_dummy()
 
 
 # ─── Main Orchestration ──────────────────────────────────────────────────────

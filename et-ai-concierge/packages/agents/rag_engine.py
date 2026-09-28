@@ -85,29 +85,112 @@ def _rerank_results(query: str, results: List[Dict[str, Any]], top_k: int) -> Li
         return results[:top_k]
 
 
+# ─── Reachability & Seed Fallback ──────────────────────────────────────────
+import socket
+from urllib.parse import urlparse
+
+_qdrant_available: Optional[bool] = None
+_pg_available: Optional[bool] = None
+_seed_articles_cache: Optional[List[Dict[str, Any]]] = None
+
+def _is_service_reachable(url_str: str, default_port: int, timeout_sec: float = 0.2) -> bool:
+    try:
+        parsed = urlparse(url_str)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or default_port
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            return True
+    except Exception:
+        return False
+
+def _load_seed_articles() -> List[Dict[str, Any]]:
+    global _seed_articles_cache
+    if _seed_articles_cache is None:
+        seed_path = os.path.join(os.path.dirname(__file__), "data", "seed_content.json")
+        try:
+            if os.path.exists(seed_path):
+                with open(seed_path, "r", encoding="utf-8") as f:
+                    _seed_articles_cache = json.load(f)
+            else:
+                _seed_articles_cache = []
+        except Exception as e:
+            print(f"[WARN] Failed to load seed_content.json: {e}")
+            _seed_articles_cache = []
+    return _seed_articles_cache
+
+def retrieve_from_seed(query_embedding: Optional[List[float]], query: str, top_k: int = 3, category: str = None) -> List[Dict[str, Any]]:
+    """Retrieve top relevant chunks from local seed content using keyword + vector scoring."""
+    articles = _load_seed_articles()
+    if not articles:
+        return []
+
+    tokens = [t.lower() for t in query.split() if len(t) > 2]
+    scored = []
+
+    for art in articles:
+        if category and art.get("category", "").lower() != category.lower():
+            continue
+        title = art.get("title", "").lower()
+        content = art.get("content", "")
+        tags = [str(t).lower() for t in art.get("tags", [])]
+
+        score = 0.0
+        for t in tokens:
+            if t in title:
+                score += 3.0
+            if any(t in tag for tag in tags):
+                score += 2.0
+            if t in content[:300].lower():
+                score += 1.0
+
+        scored.append((score, art))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    results = []
+    for score, art in scored[:top_k]:
+        results.append({
+            "id": art.get("id"),
+            "chunk_text": art.get("content", ""),
+            "title": art.get("title", ""),
+            "category": art.get("category", ""),
+            "source_url": art.get("source_url", ""),
+            "tags": art.get("tags", []),
+            "similarity": min(1.0, 0.6 + score * 0.1),
+            "source": "local_seed",
+            "paywall": art.get("paywall", False)
+        })
+
+    return results
+
+
 # ─── Retrieval ────────────────────────────────────────────────────────────────
 
 def retrieve_from_qdrant(query_embedding: List[float], top_k: int = 10) -> List[Dict[str, Any]]:
     """
-    Search Qdrant vector database for et_news_articles collection.
-    Returns list of documents with metadata and similarity scores.
+    Search Qdrant vector database for et_news_articles collection with offline bypass.
     """
-    if QdrantClient is None:
+    global _qdrant_available
+    if _qdrant_available is False or QdrantClient is None:
         return []
-    
+
+    if _qdrant_available is None:
+        _qdrant_available = _is_service_reachable(getattr(settings, "QDRANT_URL", "http://localhost:6333"), 6333)
+        if not _qdrant_available:
+            print("[INFO] Qdrant offline — bypassing vector retrieval")
+            return []
+
     try:
         client = QdrantClient(
             url=getattr(settings, "QDRANT_URL", "http://localhost:6333"),
             api_key=getattr(settings, "QDRANT_API_KEY", None),
-            timeout=10
+            timeout=1.0
         )
         
-        # Search the et_news_articles collection
         search_result = client.search(
             collection_name="et_news_articles",
             query_vector=query_embedding,
             limit=top_k,
-            score_threshold=0.5  # Only return results with similarity > 0.5
+            score_threshold=0.5
         )
         
         documents = []
@@ -126,59 +209,65 @@ def retrieve_from_qdrant(query_embedding: List[float], top_k: int = 10) -> List[
         
         return documents
     except Exception as e:
-        print(f"⚠️ Qdrant search failed: {e}")
+        _qdrant_available = False
+        print(f"[WARN] Qdrant search failed: {e} — cached offline")
         return []
 
 
 def retrieve(query: str, top_k: int = 3, category: str = None) -> List[Dict[str, Any]]:
     """
     Hybrid retrieval: search both PostgreSQL (pgvector) and Qdrant.
-    Embed the query and perform cosine similarity search in both databases.
-    Returns top-k most relevant chunks merged and ranked by similarity.
+    Falls back instantly to local seed knowledge base when offline.
     """
+    global _pg_available
     query_embedding = embed_query(query)
     if query_embedding is None:
-        return []
+        return retrieve_from_seed(None, query, top_k=top_k, category=category)
 
     pg_results = []
-    if psycopg2:
-        try:
-            conn = psycopg2.connect(settings.DATABASE_URL)
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if category:
-                    cur.execute("""
-                        SELECT
-                            id, article_id, title, category, chunk_text,
-                            chunk_index, source_url, tags, paywall,
-                            1 - (embedding <=> %s::vector) AS similarity
-                        FROM knowledge_base
-                        WHERE category = %s
-                        ORDER BY embedding <=> %s::vector
-                        LIMIT %s
-                    """, (str(query_embedding), category, str(query_embedding), top_k))
-                else:
-                    cur.execute("""
-                        SELECT
-                            id, article_id, title, category, chunk_text,
-                            chunk_index, source_url, tags, paywall,
-                            1 - (embedding <=> %s::vector) AS similarity
-                        FROM knowledge_base
-                        ORDER BY embedding <=> %s::vector
-                        LIMIT %s
-                    """, (str(query_embedding), str(query_embedding), top_k))
+    if _pg_available is not False and psycopg2:
+        if _pg_available is None:
+            _pg_available = _is_service_reachable(getattr(settings, "DATABASE_URL", "postgresql://localhost:5432"), 5432)
+        
+        if _pg_available:
+            try:
+                conn = psycopg2.connect(settings.DATABASE_URL, connect_timeout=1)
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    if category:
+                        cur.execute("""
+                            SELECT
+                                id, article_id, title, category, chunk_text,
+                                chunk_index, source_url, tags, paywall,
+                                1 - (embedding <=> %s::vector) AS similarity
+                            FROM knowledge_base
+                            WHERE category = %s
+                            ORDER BY embedding <=> %s::vector
+                            LIMIT %s
+                        """, (str(query_embedding), category, str(query_embedding), top_k))
+                    else:
+                        cur.execute("""
+                            SELECT
+                                id, article_id, title, category, chunk_text,
+                                chunk_index, source_url, tags, paywall,
+                                1 - (embedding <=> %s::vector) AS similarity
+                            FROM knowledge_base
+                            ORDER BY embedding <=> %s::vector
+                            LIMIT %s
+                        """, (str(query_embedding), str(query_embedding), top_k))
 
-                pg_results = [dict(r) for r in cur.fetchall()]
-            conn.close()
-        except Exception as e:
-            print(f"⚠️ PostgreSQL RAG retrieval error: {e}")
+                    pg_results = [dict(r) for r in cur.fetchall()]
+                conn.close()
+            except Exception as e:
+                _pg_available = False
+                print(f"[WARN] PostgreSQL RAG retrieval error: {e} — cached offline")
 
-    # Query Qdrant vector database
+    # Query Qdrant vector database (fast bypass if offline)
     qdrant_results = retrieve_from_qdrant(query_embedding, top_k=top_k)
 
     # Merge results: de-duplicate by content and rank by similarity
     merged = {}
     for doc in pg_results:
-        key = doc.get("chunk_text", "")[:100]  # Use first 100 chars as dedup key
+        key = doc.get("chunk_text", "")[:100]
         if key not in merged:
             merged[key] = doc
 
@@ -187,13 +276,12 @@ def retrieve(query: str, top_k: int = 3, category: str = None) -> List[Dict[str,
         if key not in merged:
             merged[key] = doc
 
-    # Sort by similarity as baseline
+    # If neither returned documents, use instant local seed retrieval
+    if not merged:
+        return retrieve_from_seed(query_embedding, query, top_k=top_k, category=category)
+
     similarity_ranked = sorted(merged.values(), key=lambda x: x.get("similarity", 0), reverse=True)
-    
-    # Optional reranking: improve relevance using cross-encoder
-    final_results = _rerank_results(query, similarity_ranked, top_k)
-    
-    return final_results
+    return _rerank_results(query, similarity_ranked, top_k)
 
 
 # ─── Persona-Aware Generation ─────────────────────────────────────────────────

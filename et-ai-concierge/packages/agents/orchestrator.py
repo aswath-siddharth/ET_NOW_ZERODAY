@@ -1065,49 +1065,23 @@ async def chat_history(session_id: Optional[str] = None, limit: int = 50, auth_u
 @app.get("/api/voice-briefing")
 async def voice_briefing(auth_user: AuthUser = Depends(get_current_user)):
     """
-    Generate a personalized voice briefing:
-    1. Retrieve user's recent chat interests
-    2. Fetch live market data via RAG
-    3. Generate conversational script via stepfun/step-3.5-flash
-    4. Synthesize audio via Google Cloud TTS
-    5. Return MP3 audio stream
+    Generate a personalized voice briefing with real-time audio chunk streaming.
+    Yields MP3 audio chunks on-the-fly as edge_tts synthesizes speech.
     """
     user_id = auth_user.user_id
     
     try:
-        from voice_briefing import generate_voice_briefing, get_graceful_decline_message, synthesize_audio_dummy
+        from voice_briefing import generate_voice_briefing_stream
         
-        # Generate audio (GCP TTS primary, edge-tts fallback)
-        audio_data = await generate_voice_briefing(user_id)
-        
-        if audio_data:
-            # Return streaming MP3 response
-            return StreamingResponse(
-                iter([audio_data]),
-                media_type="audio/mpeg",
-                headers={
-                    "Content-Disposition": f"inline; filename=briefing_{user_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3",
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                },
-            )
-        else:
-            # Graceful degradation: return dummy audio fallback
-            fallback_audio = synthesize_audio_dummy()
-            
-            if fallback_audio:
-                return StreamingResponse(
-                    iter([fallback_audio]),
-                    media_type="audio/mpeg",
-                    headers={"Cache-Control": "no-cache, must-revalidate"},
-                )
-            else:
-                return JSONResponse(
-                    {
-                        "error": "Voice briefing service unavailable",
-                        "message": "Please try again later or visit ET Markets for updates",
-                    },
-                    status_code=503,
-                )
+        return StreamingResponse(
+            generate_voice_briefing_stream(user_id),
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f"inline; filename=briefing_{user_id}.mp3",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Transfer-Encoding": "chunked",
+            },
+        )
     
     except Exception as e:
         print(f"[ERROR] Voice briefing endpoint error: {e}")
