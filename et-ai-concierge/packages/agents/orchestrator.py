@@ -496,7 +496,7 @@ def health_check():
             response = requests.post(settings.OPENROUTER_URL, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             openrouter_status = "ok"
-            openrouter_message = "OpenRouter (stepfun/step-3.5-flash:free) is operational (PRIMARY)"
+            openrouter_message = f"OpenRouter ({settings.OPENROUTER_MODEL}) is operational (PRIMARY)"
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "rate_limit" in error_str.lower():
@@ -523,7 +523,7 @@ def health_check():
                 max_tokens=10,
             )
             groq_status = "ok"
-            groq_message = "Groq (llama-3.1-70b-versatile) is operational (FALLBACK)"
+            groq_message = f"Groq ({settings.GROQ_MODEL}) is operational (FALLBACK)"
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "rate_limit" in error_str.lower():
@@ -702,11 +702,11 @@ async def chat_stream(request: ChatRequest, auth_user: AuthUser = Depends(get_cu
     async def generate() -> AsyncGenerator[str, None]:
         # Get the full response first
         response = await chat(request, auth_user=auth_user)
-        # Stream it token-by-token
+        # Stream it token-by-token with instant/ultra-fast rendering
         words = response.message.split(" ")
         for i, word in enumerate(words):
             yield f"data: {json.dumps({'token': word + ' ', 'done': False})}\n\n"
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.002)
         yield f"data: {json.dumps({'token': '', 'done': True, 'agent_used': response.agent_used})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

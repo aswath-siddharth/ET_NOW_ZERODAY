@@ -11,11 +11,11 @@ load_dotenv()
 class Settings:
     # ── LLM (OpenRouter StepFun Primary, Groq Fallback) ─────
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_MODEL: str = "stepfun/step-3.5-flash:free"
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
     OPENROUTER_URL: str = "https://openrouter.ai/api/v1/chat/completions"
     
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 
     # ── Auth ────────────────────────────────────
     AUTH_SECRET: str = os.getenv("AUTH_SECRET", "")

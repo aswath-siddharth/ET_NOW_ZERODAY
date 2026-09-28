@@ -59,7 +59,7 @@ def init_et_news_collection():
         return
     
     try:
-        client = QdrantClient(url=settings.QDRANT_URL)
+        client = QdrantClient(url=settings.QDRANT_URL, timeout=1.0)
         
         # Check if collection exists
         try:
@@ -87,7 +87,7 @@ def init_et_news_index():
         return
     
     try:
-        es = Elasticsearch(settings.ELASTICSEARCH_URL, request_timeout=5)
+        es = Elasticsearch(settings.ELASTICSEARCH_URL, request_timeout=1.0, max_retries=0)
         
         # Check if index exists
         try:

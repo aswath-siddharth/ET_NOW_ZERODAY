@@ -44,9 +44,9 @@ def _get_model():
         try:
             from sentence_transformers import SentenceTransformer
             _model = SentenceTransformer(EMBEDDING_MODEL)
-            print(f"✅ RAG embedding model loaded: {EMBEDDING_MODEL}")
+            print(f"[OK] RAG embedding model loaded: {EMBEDDING_MODEL}")
         except ImportError:
-            print("⚠️ sentence-transformers not installed — RAG disabled")
+            print("[WARN] sentence-transformers not installed — RAG disabled")
     return _model
 
 
